@@ -94,15 +94,54 @@ class Schema(object):
     #------------------------------
     def viewTableStructure(self, table_name):
         print('the structure of table '.encode('utf-8')+table_name+' is as follows:'.encode('utf-8'))
-        '''
-        tmp=[]
+        
+        # Iterate through the table name list to find the matching table
         for i in range(len(self.headObj.tableNames)):
-            if self.headObj.tableNames[i][0] == table_name:
-                tmp = [j.strip() for j in self.headObj.tableFields[i]]
-                print '|'.join(tmp)
-                return tmp
-        '''
-        # to be inserted here
+            if self.headObj.tableNames[i][0].strip() == table_name.strip():
+                # Get the field list for the table
+                field_list = self.headObj.tableFields[table_name.strip()]
+                
+                # Print the header with proper formatting
+                print("\n{:<15} {:<15} {:<15}".format("Field Name", "Type", "Max Length"))
+                print("-" * 45)
+                
+                # Print each field's information with proper formatting
+                for idx, field in enumerate(field_list):
+                    try:
+                        if isinstance(field[0], bytes):
+                            field_name = field[0].strip().decode('utf-8', errors='replace')
+                        else:
+                            field_name = field[0].strip()
+                            
+                        # Handle empty field names
+                        if not field_name:
+                            field_name = f"field_{idx+1}"
+                            
+                        field_type = field[1]
+                        field_length = field[2]
+                        
+                        # Convert numeric type to string representation
+                        type_str = "String" if field_type == 0 else \
+                                "VarString" if field_type == 1 else \
+                                "Integer" if field_type == 2 else \
+                                "Boolean" if field_type == 3 else \
+                                "Unknown"
+                        
+                        # Use string formatting for aligned output
+                        print("{:<15} {:<15} {:<15}".format(field_name, type_str, field_length))
+                    except Exception as e:
+                        print(f"Error displaying field: {e}")
+                        print(f"Raw field data: {field}")
+                
+                return field_list
+        
+        # If table is not found
+        if isinstance(table_name, bytes):
+            table_name_str = table_name.decode('utf-8')
+        else:
+            table_name_str = table_name
+        print(f"Table '{table_name_str}' not found in schema")
+        return None
 
     # ------------------------------------------------
     # constructor of the class
@@ -188,8 +227,12 @@ class Schema(object):
                             tempFieldName,tempFieldType,tempFieldLength = struct.unpack_from('!10sii',
                                                                                              buf, tempPos + j * MAX_FIELD_LEN)
 
-
-                            print ('field name is ', tempFieldName.strip())
+                            # Handle empty field names
+                            if not tempFieldName.strip():
+                                tempFieldName = f"field_{j+1}".encode('utf-8')
+                                print ('field name is empty, using default name:', tempFieldName)
+                            else:
+                                print ('field name is ', tempFieldName.strip())
 
                             print ('field type is', tempFieldType)
 
@@ -256,13 +299,22 @@ class Schema(object):
             beginIndex = 0
             for i in range(len(fieldList)):
                 (fieldName,fieldType,fieldLength)=fieldList[i]
-                if len(fieldName.strip())<10:
-                    if isinstance(fieldName,str):
-                        fieldName=fieldName.encode('utf-8')
-                    filledFieldName = (' ' * (MAX_FIELD_LEN - len(fieldName.strip()))).encode('utf-8') + fieldName
-                if isinstance(filledFieldName,str):
-                    filledFieldName=filledFieldName.encode('utf-8')
-                struct.pack_into('!10sii', fieldBuff, beginIndex, filledFieldName,int(fieldType),int(fieldLength))
+                # Ensure field name is not empty
+                if not fieldName or fieldName.strip() == '':
+                    fieldName = f"field_{i+1}"  # Use default name
+                
+                # Handle string encoding
+                if isinstance(fieldName, str):
+                    fieldName = fieldName.encode('utf-8')
+                
+                # Ensure field name does not exceed 10 bytes
+                if len(fieldName) > 10:
+                    fieldName = fieldName[:10]
+                # Pad field name to 10 bytes
+                filledFieldName = fieldName.ljust(10, b' ')
+                
+                # Pack field information into buffer
+                struct.pack_into('!10sii', fieldBuff, beginIndex, filledFieldName, int(fieldType), int(fieldLength))
 
                 beginIndex = beginIndex + MAX_FIELD_LEN
 
@@ -320,25 +372,27 @@ class Schema(object):
     # ------------------------------------------------   
 
     def WriteBuff(self):
-        bufLen = META_HEAD_SIZE + TABLE_NAME_HEAD_SIZE + MAX_FIELD_SECTION_SIZE  # the length of metahead, table name entries and feildName sections
+        bufLen = META_HEAD_SIZE + TABLE_NAME_HEAD_SIZE + MAX_FIELD_SECTION_SIZE
         buf = ctypes.create_string_buffer(bufLen)
         struct.pack_into('!?ii', buf, 0, self.headObj.isStored, self.headObj.lenOfTableNum, self.headObj.offsetOfBody)
-        #isStored, tempTableNum, tempOffset = struct.unpack_from('!?ii', buf,0)  # link:https://docs.python.org/2/library/struct.html
-        #print isStored,tempTableNum,tempOffset
+        
         for idx in range(len(self.headObj.tableNames)):
             tmp_tableName = self.headObj.tableNames[idx][0]
             if len(tmp_tableName)<10:
-                tmp_tableName = ' ' * (10 - len(tmp_tableName.strip())) + tmp_tableName
+                tmp_tableName = (' ' * (10 - len(tmp_tableName.strip()))).encode("utf-8") + tmp_tableName
 
             # write (tablename,numberoffields,offsetinbody) to buffer
             struct.pack_into('!10sii', buf, META_HEAD_SIZE + idx * TABLE_NAME_ENTRY_LEN, tmp_tableName,
                              self.headObj.tableNames[idx][1],self.headObj.tableNames[idx][2])
 
             # write the field information of each table into the buffer
-            for idj in range(self.headObj.tableNames[idx][1]):
-                (tempFieldName,tempFieldType,tempFieldLength)=self.headObj.tableFields[idx][idj]                
-                struct.pack_into('!10sii',buf,self.headObj.tableNames[idx][2]+idj*MAX_FIELD_LEN,
-                                tempFieldName,tempFieldType,tempFieldLength)
+            table_name = self.headObj.tableNames[idx][0].strip()
+            field_list = self.headObj.tableFields[table_name]
+            for idj in range(len(field_list)):
+                (tempFieldName,tempFieldType,tempFieldLength) = field_list[idj]
+                struct.pack_into('!10sii', buf, self.headObj.tableNames[idx][2]+idj*MAX_FIELD_LEN,
+                                tempFieldName, tempFieldType, tempFieldLength)
+        
         self.fileObj.seek(0)
         self.fileObj.write(buf)
         self.fileObj.flush()
@@ -366,15 +420,15 @@ class Schema(object):
 
             
             if len(self.headObj.tableNames)>0: # there is at least one table after the deletion
-                name_list = map(lambda x: x[0], self.headObj.tableNames)
-                field_num_per_table = map(lambda x: x[1], self.headObj.tableNames)
+                name_list = list(map(lambda x: x[0], self.headObj.tableNames))
+                field_num_per_table = list(map(lambda x: x[1], self.headObj.tableNames))
                 table_offset= list(map(lambda x: x[2], self.headObj.tableNames))
 
                 table_offset[0] = BODY_BEGIN_INDEX
                 for idx in range(1,len(table_offset)):
                     table_offset[idx] = table_offset[idx-1] + field_num_per_table[idx-1]*MAX_FIELD_LEN
                     
-                self.headObj.tableNames=zip(name_list,field_num_per_table,table_offset)
+                self.headObj.tableNames=list(zip(name_list,field_num_per_table,table_offset))
                 self.headObj.offsetOfBody=self.headObj.tableNames[-1][2]+self.headObj.tableNames[-1][1]*MAX_FIELD_LEN
                 self.WriteBuff()
 
