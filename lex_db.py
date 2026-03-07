@@ -1,93 +1,74 @@
-#-------------------------------
 # lex_db.py
-# author: Jingyu Han hjymail@163.com
-# modified by:
-#--------------------------------------------
-# the module is responsible for
-#(1) defining tokens used for parsing SQL statements
-#(2) constructing a lex object
-#-------------------------------
+# SQL lexer for the project query subsystem.
+
 import ply.lex as lex
+
 import common_db
 
-tokens=('SELECT','FROM','WHERE','AND','TCNAME','EQX','COMMA','CONSTANT','SPACE','STAR')
+keywords = {
+    'select': 'SELECT',
+    'from': 'FROM',
+    'where': 'WHERE',
+    'and': 'AND',
+    'true': 'BOOL',
+    'false': 'BOOL',
+}
 
-# the following is to defining rules for each token
-def t_SELECT(t):
-    r'select'
+tokens = (
+    'SELECT',
+    'FROM',
+    'WHERE',
+    'AND',
+    'IDENT',
+    'INT',
+    'STRING',
+    'BOOL',
+    'EQ',
+    'COMMA',
+    'STAR',
+    'DOT',
+    'SEMI',
+)
+
+t_EQ = r'='
+t_COMMA = r','
+t_STAR = r'\*'
+t_DOT = r'\.'
+t_SEMI = r';'
+t_ignore = ' \t\r\n'
+
+
+def t_IDENT(t):
+    r'[A-Za-z_][A-Za-z0-9_]*'
+    token_type = keywords.get(t.value.lower())
+    if token_type is None:
+        return t
+    t.type = token_type
+    if token_type == 'BOOL':
+        t.value = (t.value.lower() == 'true')
     return t
 
-def t_FROM(t):
-    r'from'
+
+def t_INT(t):
+    r'-?\d+'
+    t.value = int(t.value)
     return t
 
-def t_WHERE(t):
-    r'where'
+
+def t_STRING(t):
+    r"'([^'\\]|\\.|'')*'"
+    raw = t.value[1:-1]
+    raw = raw.replace("''", "'")
+    raw = raw.replace("\\'", "'")
+    t.value = raw
     return t
 
-def t_AND(t):
-    r'and'
-    return t
-
-def t_TCNAME(t):
-    r'[A-Z_a-z]\w*'
-    return t
-def t_COMMA(t):
-    r','
-    return t
-
-def t_EQX(t):
-    r'[=]'
-    return t
-
-def t_CONSTANT(t):
-    r'\d+|\'\w+\''
-    return t
-
-def t_SPACE(t):
-    r'\s+'
-    pass
-
-def t_STAR(t):
-    r'\*'
-    return t
-
-#--------------------------
-# to cope with the error
-#------------------------
 
 def t_error(t):
-    try:
-    
-        print ('wrong')
+    raise SyntaxError("Illegal character '%s' at position %d" % (t.value[0], t.lexpos))
 
-    except lex.LexError:
-        print ('wrong')
 
-    else:
-        print ('wrong')
-
-        
-#------------------------------------------
-# to set the global_lexer in common_db.py
-#-------------------------------------------
 def set_lex_handle():
-    common_db.global_lexer=lex.lex()
+    common_db.global_lexer = lex.lex()
     if common_db.global_lexer is None:
-        print ('wrong when the global_lex is created')
-
-
-
-'''
-def test():
-    my_lexer=lex.lex()
-    my_lexer.input("select f1,f2 from GOOD where f1='xx' and f2=5 ")
-    while True:
-        temp_tok=my_lexer.token()
-        if temp_tok is None:
-            break
-        print temp_tok
-
-
-test()
-'''
+        print('wrong when the global_lex is created')
