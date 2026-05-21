@@ -11,7 +11,8 @@
 
 import ctypes
 import struct
-import head_db # it is main memory structure for the table schema
+from . import head_db # it is main memory structure for the table schema
+from . import common_db
 
 
 
@@ -71,7 +72,7 @@ class Schema(object):
     Schema class
     '''
 
-    fileName = 'all.sch'  # the schema file name
+    fileName = common_db.data_path('all.sch')  # the schema file name
     count = 0  # there should be only one object in the program
 
     @staticmethod

@@ -3,8 +3,8 @@
 
 import ply.yacc as yacc
 
-import common_db
-from lex_db import tokens
+from . import common_db
+from .lex_db import tokens
 
 _parser_instance = None
 

@@ -17,3 +17,7 @@ lextab.py
 
 # 教程目录
 tutorial/
+
+# 运行产物日志与索引（.dat/.sch 含测试种子数据，保留追踪）
+data/*.log
+data/*.ind

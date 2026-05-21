@@ -3,8 +3,8 @@
 
 import os
 
-import common_db
-import storage_db
+from . import common_db
+from . import storage_db
 
 
 class SqlExecutionError(Exception):
@@ -22,7 +22,7 @@ def _decode_if_bytes(value):
 
 
 def _table_file_exists(table_name):
-    return os.path.exists(table_name + '.dat')
+    return os.path.exists(common_db.data_path(table_name + '.dat'))
 
 
 def _resolve_table_name(table_name):
@@ -30,7 +30,7 @@ def _resolve_table_name(table_name):
         return table_name
 
     expected = table_name.lower() + '.dat'
-    for filename in os.listdir('.'):
+    for filename in os.listdir(common_db.DATA_DIR):
         if filename.lower() == expected:
             return filename[:-4]
     raise SqlExecutionError("Table '%s' does not exist" % table_name)

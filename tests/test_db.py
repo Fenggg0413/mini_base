@@ -2,13 +2,14 @@
 # -*- coding: utf-8 -*-
 
 import os
-import schema_db
-import head_db
+from src import schema_db
+from src import head_db
+from src import common_db
 
 def test_schema():
     # 删除已有的schema文件，以便重新创建
-    if os.path.exists('all.sch'):
-        os.remove('all.sch')
+    if os.path.exists(common_db.data_path('all.sch')):
+        os.remove(common_db.data_path('all.sch'))
     
     # 创建schema对象
     sch = schema_db.Schema()

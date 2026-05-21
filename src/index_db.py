@@ -36,7 +36,7 @@ SPECIAL_INDEX_BLOCK_PTR=-1 # this is the last ptr for last leaf node when the ne
 
 
 import os
-import common_db
+from . import common_db
 import ctypes
 
 def test():
@@ -68,15 +68,15 @@ class Index(object):
 
         print ("__init__ of ",Index.__name__)
         tablename.strip()
-        if  not os.path.exists(tablename+'.ind'): # in this case, the index file does not exist
-            
+        if  not os.path.exists(common_db.data_path(tablename+'.ind')): # in this case, the index file does not exist
+
             print ('index file '+tablename+'.ind does not exist')
-            self.f_handle=open(tablename+'.ind','wb+')
+            self.f_handle=open(common_db.data_path(tablename+'.ind'),'wb+')
             print (tablename+'.ind has been created')
             
         else: # the index file exists and we read its first block
             
-            self.f_handle=open(tablename+'.ind','rb+')
+            self.f_handle=open(common_db.data_path(tablename+'.ind'),'rb+')
             print ('index file '+tablename+'.ind has been opened')
             self.open=True
 

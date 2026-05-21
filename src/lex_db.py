@@ -3,7 +3,7 @@
 
 import ply.lex as lex
 
-import common_db
+from . import common_db
 
 keywords = {
     'select': 'SELECT',

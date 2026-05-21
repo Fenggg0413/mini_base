@@ -6,7 +6,22 @@
 # the module provides the constants, class, data structures which
 # are used for all the program
 #--------------------------------------------------
+import os
+
 BLOCK_SIZE=4096 # the size of one block during reading files
+
+# 所有运行产物（*.dat, all.sch, *.log, *.ind）集中存放的目录。
+# 基于本文件位置定位到项目根下的 data/，与运行时 CWD 无关。
+DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data'))
+os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def data_path(name):
+    """拼接 data/ 目录下的文件路径，兼容 str 与 bytes 文件名。"""
+    if isinstance(name, bytes):
+        return os.path.join(DATA_DIR.encode('utf-8'), name)
+    return os.path.join(DATA_DIR, name)
+
 
 global_lexer=None   # the global lex, which is filled in the moudle lex_db.py
 global_parser=None  # the global yacc, which is filled in the module yacc_db.py

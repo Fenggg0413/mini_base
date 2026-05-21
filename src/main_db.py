@@ -11,16 +11,15 @@ import sys
 import ctypes
 import os
 
-import head_db  # the main memory structure of table schema
-import schema_db  # the module to process table schema
-import storage_db  # the module to process the storage of instance
+from . import head_db  # the main memory structure of table schema
+from . import schema_db  # the module to process table schema
+from . import storage_db  # the module to process the storage of instance
 
-import query_plan_db  # for SQL clause of which data is stored in binary format
-import lex_db  # for lex, where data is stored in binary format
-import parser_db  # for yacc, where ddata is tored in binary format
-import common_db  # the global variables, functions, constants in the program
-import query_plan_db  # construct the query plan and execute it
-import transaction_db  # 导入事务管理模块
+from . import query_plan_db  # for SQL clause of which data is stored in binary format
+from . import lex_db  # for lex, where data is stored in binary format
+from . import parser_db  # for yacc, where ddata is tored in binary format
+from . import common_db  # the global variables, functions, constants in the program
+from . import transaction_db  # 导入事务管理模块
 
 PROMPT_STR = 'Input your choice  \n1:add a new table structure and data \n2:delete a table structure and data\
 \n3:view a table structure and data \n4:delete all tables and data \n5:select from where clause\

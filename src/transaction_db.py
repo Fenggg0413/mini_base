@@ -9,7 +9,8 @@ import os
 import struct
 import ctypes
 import datetime
-from common_db import BLOCK_SIZE
+from .common_db import BLOCK_SIZE
+from . import common_db
 
 # 事务状态常量
 TRANSACTION_ACTIVE = 0
@@ -45,17 +46,17 @@ class TransactionManager:
         self.committed_transactions = {}  # 提交事务表 {txn_id: commit_time}
         
         # 创建日志文件
-        if not os.path.exists('before_image.log'):
-            with open('before_image.log', 'wb') as f:
+        if not os.path.exists(common_db.data_path('before_image.log')):
+            with open(common_db.data_path('before_image.log'), 'wb') as f:
                 pass
-        
-        if not os.path.exists('after_image.log'):
-            with open('after_image.log', 'wb') as f:
+
+        if not os.path.exists(common_db.data_path('after_image.log')):
+            with open(common_db.data_path('after_image.log'), 'wb') as f:
                 pass
-                
+
         # 初始化日志文件句柄
-        self.before_image_file = open('before_image.log', 'rb+')
-        self.after_image_file = open('after_image.log', 'rb+')
+        self.before_image_file = open(common_db.data_path('before_image.log'), 'rb+')
+        self.after_image_file = open(common_db.data_path('after_image.log'), 'rb+')
         
         # 获取日志文件当前大小
         self.before_image_file.seek(0, 2)  # 移动到文件末尾
@@ -613,14 +614,14 @@ class TransactionManager:
                 record_data = record_data.encode('utf-8')
 
             # 打开数据文件
-            file_path = f"{table_name_str}.dat"
+            file_path = common_db.data_path(f"{table_name_str}.dat")
             if not os.path.exists(file_path):
                 # 尝试使用字节类型的表名
                 if isinstance(table_name, str):
-                    file_path = table_name.encode('utf-8') + b'.dat'
+                    file_path = common_db.data_path(table_name.encode('utf-8') + b'.dat')
                 else:
-                    file_path = table_name + b'.dat'
-                
+                    file_path = common_db.data_path(table_name + b'.dat')
+
                 if not os.path.exists(file_path):
                     print(f"数据文件 {file_path} 不存在，无法恢复数据")
                     return False

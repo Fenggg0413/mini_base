@@ -10,9 +10,9 @@ import sys
 import time
 import random
 import signal
-import storage_db
-import transaction_db
-import schema_db
+from src import storage_db
+from src import transaction_db
+from src import schema_db
 
 def test_existing_table():
     """测试已存在的表"""

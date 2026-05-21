@@ -11,7 +11,7 @@
 # ---------------------------------------------------
 # block_0|block_1|...|block_n
 # ----------------------------------------------------------------
-from common_db import BLOCK_SIZE
+from .common_db import BLOCK_SIZE
 
 # structure of block_0, which stores the meta information and field information
 # ---------------------------------------------------------------------------------
@@ -60,8 +60,8 @@ import struct
 import os
 import ctypes
 import datetime
-import transaction_db
-import common_db
+from . import transaction_db
+from . import common_db
 
 
 # --------------------------------------------
@@ -84,14 +84,14 @@ class Storage(object):
         self.record_Position = []
         self.tableName = tablename
 
-        if not os.path.exists(tablename + '.dat'.encode('utf-8')):  # the file corresponding to the table does not exist
+        if not os.path.exists(common_db.data_path(tablename + '.dat'.encode('utf-8'))):  # the file corresponding to the table does not exist
             print('table file '.encode('utf-8') + tablename + '.dat does not exists'.encode('utf-8'))
-            self.f_handle = open(tablename + '.dat'.encode('utf-8'), 'wb+')
+            self.f_handle = open(common_db.data_path(tablename + '.dat'.encode('utf-8')), 'wb+')
             self.f_handle.close()
             self.open = False
             print(tablename + '.dat has been created'.encode('utf-8'))
 
-        self.f_handle = open(tablename + '.dat'.encode('utf-8'), 'rb+')
+        self.f_handle = open(common_db.data_path(tablename + '.dat'.encode('utf-8')), 'rb+')
         print('table file '.encode('utf-8') + tablename + '.dat has been opened'.encode('utf-8'))
         self.open = True
 
@@ -358,8 +358,8 @@ class Storage(object):
 
         # step 2: remove the file from os   
         tableName.strip()
-        if os.path.exists(tableName + '.dat'.encode('utf-8')):
-            os.remove(tableName + '.dat'.encode('utf-8'))
+        if os.path.exists(common_db.data_path(tableName + '.dat'.encode('utf-8'))):
+            os.remove(common_db.data_path(tableName + '.dat'.encode('utf-8')))
 
         return True
 
