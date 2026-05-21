@@ -9,6 +9,7 @@
 #-------------------------------------------
 
 
+import os
 import ctypes
 import struct
 from . import head_db # it is main memory structure for the table schema
@@ -151,7 +152,10 @@ class Schema(object):
         print ('__init__ of Schema')
 
         print ('schema fileName is ' + Schema.fileName)
-        self.fileObj = open(Schema.fileName, 'rb+')  # in binary format
+        # 'rb+' 要求文件已存在；首次运行 all.sch 不存在时用 'wb+' 创建空文件，
+        # 后续读到空内容会走下方的初始化分支
+        mode = 'rb+' if os.path.exists(Schema.fileName) else 'wb+'
+        self.fileObj = open(Schema.fileName, mode)  # in binary format
 
         # read all data from schema file
         bufLen = META_HEAD_SIZE + TABLE_NAME_HEAD_SIZE + MAX_FIELD_SECTION_SIZE  # the length of metahead, table name entries and feildName sections
@@ -257,13 +261,21 @@ class Schema(object):
 
         print ("__del__ of class Schema begins to execute")
 
-        buf = ctypes.create_string_buffer(12)
+        # __init__ 若中途异常，fileObj/headObj 可能未赋值；防御访问以免在
+        # 回收半构造对象时抛 AttributeError 掩盖原始异常
+        file_obj = getattr(self, 'fileObj', None)
+        if file_obj is None:
+            return
 
-        struct.pack_into('!?ii', buf, 0, self.headObj.isStored, self.headObj.lenOfTableNum, self.headObj.offsetOfBody)
-        self.fileObj.seek(0)
-        self.fileObj.write(buf)
-        self.fileObj.flush()
-        self.fileObj.close()
+        head_obj = getattr(self, 'headObj', None)
+        if head_obj is not None:
+            buf = ctypes.create_string_buffer(12)
+            struct.pack_into('!?ii', buf, 0, head_obj.isStored, head_obj.lenOfTableNum, head_obj.offsetOfBody)
+            file_obj.seek(0)
+            file_obj.write(buf)
+            file_obj.flush()
+
+        file_obj.close()
 
     # --------------------------
     # delete all the contents in the schema file
