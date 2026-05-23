@@ -1,38 +1,34 @@
 # mini_base
 
-一个迷你关系型数据库系统，用 Python 实现了关系数据库的核心环节：模式管理、记录存储、SQL 解析与执行、B+ 树索引以及基于日志的事务持久化。适合用来理解数据库内部是如何把一条 SQL 变成磁盘上的字节的。
+基于南京邮电大学数据库系统课程实现的一个迷你关系型数据库系统，用 Python 实现了关系数据库的核心环节：模式管理、记录存储、SQL 解析与执行、B+ 树索引以及基于日志的事务持久化。
 
 ## 功能
 
-通过交互式菜单提供以下操作：
+提供 SQL REPL（Read-Eval-Print Loop）命令行交互，支持以下 SQL 语句：
 
-| 选项 | 功能 |
-|------|------|
-| 1 | 新建表结构并录入数据 |
-| 2 | 删除指定表（结构 + 数据 + 索引） |
-| 3 | 查看表结构及全部数据 |
-| 4 | 删除所有表 |
-| 5 | 执行 `SELECT ... FROM ... [WHERE ...]` 查询（自动使用索引加速） |
-| 6 | 按字段关键字删除一行 |
-| 7 | 按字段关键字更新一行 |
-| 8 / 9 / 10 | 开启 / 提交 / 终止事务 |
-| 11 | 在表的指定字段上创建 B+ 树索引 |
-| 12 | 删除指定索引 |
-| 13 | 查看所有已建索引 |
+| SQL 语句 | 说明 |
+|----------|------|
+| `CREATE TABLE table (col_def, ...)` | 创建表 |
+| `DROP TABLE table` | 删除表（含数据 + 索引） |
+| `INSERT INTO table [(cols)] VALUES (vals)` | 插入记录 |
+| `SELECT ... FROM ... [WHERE ...] [ORDER BY ...]` | 查询（自动使用 B+ 树索引加速） |
+| `UPDATE table SET col=val [WHERE ...]` | 更新记录 |
+| `DELETE FROM table [WHERE ...]` | 删除记录 |
+| `BEGIN [TRANSACTION]` / `COMMIT` / `ROLLBACK` | 事务控制 |
+| `CREATE INDEX ON table(field)` | 创建 B+ 树索引 |
+| `DROP INDEX ON table(field)` | 删除索引 |
+| `SHOW TABLES` | 列出所有表 |
+| `SHOW INDEX [FROM table]` | 查看索引 |
+| `DESCRIBE table` | 查看表结构 |
 
-底层特性：
-
-- **存储引擎**：每张表存为独立的 `表名.dat` 文件，按 4KB 块组织，块 0 存元信息与字段定义。
-- **SQL 解析**：基于 [PLY](https://www.dabeaz.com/ply/) 的词法（`lex_db`）与语法（`parser_db`）分析，生成逻辑查询计划（`query_plan_db`）。
-- **索引**：`index_db` 实现完整的 B+ 树索引（插入、搜索、删除、叶节点/内部节点分裂）。索引通过 `index_catalog` 管理目录，自动在插入/删除/更新时维护，并在等值查询时加速 SELECT。
-- **事务持久化**：前像 / 后像日志（`before_image.log` / `after_image.log`），支持崩溃后重做恢复。
+Dot-commands: `.help` / `.quit`
 
 ## 目录结构
 
 ```
 mini_base/
 ├── src/                    # 数据库引擎
-│   ├── main_db.py          # 程序入口与主菜单
+│   ├── main_db.py          # SQL REPL 入口
 │   ├── common_db.py        # 全局常量、数据路径（DATA_DIR / data_path）
 │   ├── schema_db.py        # 模式管理（all.sch）
 │   ├── head_db.py          # 模式的内存结构
@@ -45,8 +41,9 @@ mini_base/
 │   └── query_plan_db.py    # 查询计划构建与执行（含索引加速）
 ├── tests/                  # 测试脚本
 │   ├── test_index_db.py       # B+ 树核心测试
-│   └── test_index_integration.py  # 索引集成测试（目录、删除、加速）
-├── data/                   # 运行数据：*.dat / *.ind / all.sch / *.log / index.cat
+│   ├── test_index_integration.py  # 索引集成测试（目录、删除）
+│   ├── test_sql.py            # SQL 解析与执行测试（CRUD、WHERE、ORDER BY）
+│   └── test_sql_extended.py   # 扩展 SQL 测试（事务、索引、REPL）
 └── docs/                   # 原始文档
 ```
 
@@ -60,39 +57,47 @@ mini_base/
 pip install ply
 ```
 
-从项目根目录以模块方式启动：
+从项目根目录以模块方式启动 SQL REPL：
 
 ```bash
 python -m src.main_db
 ```
 
-`data/` 目录已附带示例表 `courses`、`students`、`takes`、`test`，启动后可直接用选项 3 或 5 查看 / 查询。
+启动后进入 `mini_base>` 提示符，直接输入 SQL 语句或 dot-commands。
 
-## 索引使用示例
+## 使用示例
 
 ```
-选项 11 → 创建索引
-  表名: students
-  字段名: sid
+mini_base> CREATE TABLE students (name str(10), age int, active bool);
+mini_base> INSERT INTO students VALUES ('Alice', 20, '1');
+mini_base> INSERT INTO students VALUES ('Bob', 22, '0');
+mini_base> SELECT * FROM students;
+mini_base> SELECT * FROM students WHERE age > 20;
+mini_base> UPDATE students SET age = 23 WHERE name = 'Bob';
+mini_base> DELETE FROM students WHERE name = 'Alice';
 
-选项 5 → 索引加速查询
-  SELECT * FROM students WHERE sid = 's001'
-  （自动检测 WHERE 条件中的索引字段，走 B+ 树查找而非全表扫描）
+mini_base> BEGIN;
+mini_base> INSERT INTO students VALUES ('Carol', 19, '1');
+mini_base> COMMIT;
 
-选项 13 → 查看所有索引
-  students.sid
+mini_base> CREATE INDEX ON students(age);
+mini_base> SHOW INDEX FROM students;
+mini_base> DESCRIBE students;
+mini_base> SHOW TABLES;
 
-选项 12 → 删除索引
-  表名: students
-  字段名: sid
+mini_base> DROP INDEX ON students(age);
+mini_base> DROP TABLE students;
+mini_base> .quit
 ```
+
+WHERE 子句支持 `=`, `!=`, `<`, `>`, `<=`, `>=`，`AND`/`OR`/`NOT` 以及括号分组，ORDER BY 支持 `ASC`/`DESC`。
 
 ## 测试
 
 ```bash
-python -m pytest tests/test_index_db.py -v          # B+ 树核心测试
+python -m pytest tests/ -v                           # 全部测试（141 个）
+python -m pytest tests/test_index_db.py -v           # B+ 树核心测试
 python -m pytest tests/test_index_integration.py -v  # 索引集成测试
-python -m pytest tests/ -v                           # 全部测试
+python -m pytest tests/test_sql.py -v                # SQL 解析与执行测试
+python -m pytest tests/test_sql_extended.py -v       # 扩展 SQL 测试
 ```
-
-注意：`test_db` 和 `test_transaction` 为交互式脚本，会调用 `input()`，不适合在 pytest 中运行。
