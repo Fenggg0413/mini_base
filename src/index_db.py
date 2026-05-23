@@ -423,24 +423,3 @@ class Index(object):
         return True
 
 
-def test():
-    my_dict = {}
-    my_dict.setdefault('one', 80)
-    my_dict.setdefault('two', 90)
-    my_dict.setdefault('aaa', 90)
-    print(my_dict.keys())
-    print(my_dict.items())
-    for my_each_key in sorted(my_dict):
-        print("the value of key ", my_each_key, " is ", my_dict[my_each_key])
-
-    my_list = []
-    my_tuple = (1, 2)
-    my_list.append(my_tuple)
-    (a, b) = my_list[0]
-    print(a, b)
-
-
-if __name__ == '__main__':
-    index_obj = Index('all')
-    index_obj.insert_index_entry('a', 4, 1)
-    test()

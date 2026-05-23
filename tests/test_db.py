@@ -3,7 +3,6 @@
 
 import os
 from src import schema_db
-from src import head_db
 from src import common_db
 
 def test_schema():

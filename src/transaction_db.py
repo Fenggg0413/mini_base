@@ -7,7 +7,6 @@
 
 import os
 import struct
-import ctypes
 import datetime
 from .common_db import BLOCK_SIZE
 from . import common_db
@@ -16,9 +15,6 @@ from . import common_db
 TRANSACTION_ACTIVE = 0
 TRANSACTION_COMMITTED = 1
 TRANSACTION_ABORTED = 2
-
-OPERATION_INSERT = 0
-OPERATION_UPDATE = 1
 
 LOG_RECORD_STATUS = 0x00
 LOG_RECORD_IMAGE = 0x01

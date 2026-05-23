@@ -312,108 +312,7 @@ def _invert_string(s):
     return ''.join(chr(0x10FFFF - ord(c)) for c in s)
 
 
-def construct_logical_tree():
-    ast = common_db.global_syn_tree
-    if not ast:
-        print('there is no data in the syntax tree in the construct_logical_tree')
-        common_db.global_logical_tree = None
-        return
 
-    common_db.global_logical_tree = {
-        'op': 'project',
-        'columns': ast['columns'],
-        'child': {
-            'op': 'filter',
-            'conditions': ast.get('where', []),
-            'child': {
-                'op': 'cross_join',
-                'tables': ast['tables'],
-            },
-        },
-    }
-
-
-def _run_plan(plan):
-    tables = plan['child']['child']['tables']
-    conditions = plan['child']['conditions']
-
-    if conditions and len(tables) == 1:
-        indexed_fields = index_catalog.get_indexed_fields(tables[0].strip())
-        use_index = False
-        index_table = None
-        index_field = None
-        index_value = None
-
-        if isinstance(conditions, dict) and conditions.get('type') == 'condition' and conditions['op'] == '=':
-            left = conditions['left']
-            right = conditions['right']
-            if left['type'] == 'column' and right['type'] == 'literal':
-                col_name = _norm(left['name'])
-                for fname in indexed_fields:
-                    if col_name == _norm(fname):
-                        use_index = True
-                        index_field = fname
-                        index_value = right['value']
-                        index_table = tables[0]
-                        break
-            elif right['type'] == 'column' and left['type'] == 'literal':
-                col_name = _norm(right['name'])
-                for fname in indexed_fields:
-                    if col_name == _norm(fname):
-                        use_index = True
-                        index_field = fname
-                        index_value = left['value']
-                        index_table = tables[0]
-                        break
-
-        if use_index:
-            try:
-                scan = _index_scan_table(index_table, index_field, index_value)
-                scans = [scan]
-            except Exception:
-                scans = [_scan_table(t) for t in tables]
-
-    if not use_index:
-        scans = [_scan_table(t) for t in tables]
-
-    context = _build_scan_context(scans)
-
-    rows = [{}]
-    for scan in scans:
-        if not scan['rows']:
-            rows = []
-            break
-        if rows == [{}]:
-            rows = scan['rows']
-        else:
-            rows = _cross_join(rows, scan['rows'])
-
-    if conditions:
-        rows = _apply_filter(rows, conditions, context)
-
-    selected_columns = _project_columns(plan['columns'], context)
-    output_fields = [item[1] for item in selected_columns]
-    output_rows = []
-    for row in rows:
-        output_rows.append([row[item[0]] for item in selected_columns])
-
-    return output_fields, output_rows, True
-
-
-def execute_logical_tree():
-    if not common_db.global_logical_tree:
-        print('there is no query plan tree for the execution')
-        return
-
-    try:
-        output_fields, output_rows, _ = _run_plan(common_db.global_logical_tree)
-    except Exception as exc:
-        print('WRONG SQL INPUT! %s' % str(exc))
-        return
-
-    print(output_fields)
-    for row in output_rows:
-        print(row)
 
 
 # ─────── Unified SQL Execution Entry Point ───────
@@ -422,8 +321,6 @@ def execute_sql(sql_str):
     """Parse and execute any SQL statement."""
     lex_db.set_lex_handle()
     parser_db.set_handle()
-    common_db.global_syn_tree = None
-    common_db.global_logical_tree = None
 
     ast = common_db.global_parser.parse(sql_str.strip(), lexer=common_db.global_lexer)
     if ast is None:

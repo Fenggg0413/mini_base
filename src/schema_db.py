@@ -326,9 +326,6 @@ class Schema(object):
             self.fileObj.write(fieldBuff)
             self.fileObj.flush()
 
-            # self.headObj.offsetOfBody=self.headObj.offsetBody+fieldNum*MAX_FIELD_LEN
-
-            print ("the following is to write table name entry to tableNameHead in all.sch")
             filledTableName = fillTableName(tableName)
             if isinstance(filledTableName, str):
                 filledTableName = filledTableName.encode('utf-8')
@@ -430,7 +427,6 @@ class Schema(object):
             
             del self.headObj.tableNames[tmpIndex]
             del self.headObj.tableFields[table_name.strip()]
-            #print self.headObj.tableFields
             self.headObj.lenOfTableNum-=1
 
             

@@ -23,27 +23,22 @@ def _make_column_ref(value):
 
 def p_statement_insert(t):
     'Statement : InsertStmt'
-    common_db.global_syn_tree = t[1]
     t[0] = t[1]
 
 def p_statement_update(t):
     'Statement : UpdateStmt'
-    common_db.global_syn_tree = t[1]
     t[0] = t[1]
 
 def p_statement_delete(t):
     'Statement : DeleteStmt'
-    common_db.global_syn_tree = t[1]
     t[0] = t[1]
 
 def p_statement_create(t):
     'Statement : CreateStmt'
-    common_db.global_syn_tree = t[1]
     t[0] = t[1]
 
 def p_statement_drop(t):
     'Statement : DropStmt'
-    common_db.global_syn_tree = t[1]
     t[0] = t[1]
 
 def p_statement_select(t):
@@ -141,7 +136,6 @@ def p_query(t):
         'where': t[5],
         'order_by': t[6],
     }
-    common_db.global_syn_tree = t[0]
 
 def p_select_list_star(t):
     'SelectList : STAR'
