@@ -24,7 +24,7 @@ from . import index_db  # 导入索引管理模块
 from . import index_catalog  # 导入索引目录管理模块
 
 PROMPT_STR = 'Input your choice  \n1:add a new table structure and data \n2:delete a table structure and data\
-\n3:view a table structure and data \n4:delete all tables and data \n5:select from where clause\
+\n3:view a table structure and data \n4:delete all tables and data \n5:execute SQL statement\
 \n6:delete a row according to field keyword \n7:update a row according to field keyword \
 \n8:begin a transaction \n9:commit transaction \n10:abort transaction \
 \n11:create an index on a table field \n12:drop an index \n13:view all indexes \
@@ -126,22 +126,14 @@ def main():
             choice = input(PROMPT_STR)
 
 
-        elif choice == '5':  # process SELECT FROM WHERE clause
-            print('#        Your Query is to SQL QUERY                  #')
-            sql_str = input('please enter the select from where clause:')
-            lex_db.set_lex_handle()  # to set the global_lexer in common_db.py
-            parser_db.set_handle()  # to set the global_parser in common_db.py
-            common_db.global_syn_tree = None
-            common_db.global_logical_tree = None
-
+        elif choice == '5':  # 执行SQL语句
+            print('#        Your SQL Statement                  #')
+            sql_str = input('please enter the SQL statement:')
             try:
-                common_db.global_syn_tree = common_db.global_parser.parse(sql_str.strip(),
-                                                                          lexer=common_db.global_lexer)  # construct the global_syn_tree
-                query_plan_db.construct_logical_tree()
-                query_plan_db.execute_logical_tree()
+                query_plan_db.execute_sql(sql_str)
             except Exception as e:
-                print('WRONG SQL INPUT! %s' % str(e))
-            print('#----------------------------------------------------#')
+                print('SQL Error: %s' % str(e))
+            print('#-----------------------------------------------#')
             choice = input(PROMPT_STR)
 
 

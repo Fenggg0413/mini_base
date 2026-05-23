@@ -10,6 +10,24 @@ keywords = {
     'from': 'FROM',
     'where': 'WHERE',
     'and': 'AND',
+    'or': 'OR',
+    'not': 'NOT',
+    'insert': 'INSERT',
+    'into': 'INTO',
+    'values': 'VALUES',
+    'update': 'UPDATE',
+    'set': 'SET',
+    'delete': 'DELETE',
+    'create': 'CREATE',
+    'drop': 'DROP',
+    'table': 'TABLE',
+    'order': 'ORDER',
+    'by': 'BY',
+    'asc': 'ASC',
+    'desc': 'DESC',
+    'str': 'STRING_TYPE',
+    'int': 'INT_TYPE',
+    'bool': 'BOOL_TYPE',
     'true': 'BOOL',
     'false': 'BOOL',
 }
@@ -19,22 +37,54 @@ tokens = (
     'FROM',
     'WHERE',
     'AND',
+    'OR',
+    'NOT',
+    'INSERT',
+    'INTO',
+    'VALUES',
+    'UPDATE',
+    'SET',
+    'DELETE',
+    'CREATE',
+    'DROP',
+    'TABLE',
+    'ORDER',
+    'BY',
+    'ASC',
+    'DESC',
     'IDENT',
     'INT',
     'STRING',
     'BOOL',
+    'STRING_TYPE',
+    'INT_TYPE',
+    'BOOL_TYPE',
     'EQ',
+    'NEQ',
+    'LT',
+    'GT',
+    'LTE',
+    'GTE',
     'COMMA',
     'STAR',
     'DOT',
     'SEMI',
+    'LPAREN',
+    'RPAREN',
 )
 
+t_NEQ = r'<>|!='
+t_LTE = r'<='
+t_GTE = r'>='
+t_LT = r'<'
+t_GT = r'>'
 t_EQ = r'='
 t_COMMA = r','
 t_STAR = r'\*'
 t_DOT = r'\.'
 t_SEMI = r';'
+t_LPAREN = r'\('
+t_RPAREN = r'\)'
 t_ignore = ' \t\r\n'
 
 

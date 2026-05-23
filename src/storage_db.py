@@ -108,6 +108,45 @@ class Storage(object):
 
         self._load_records()
 
+    @classmethod
+    def create_table(cls, tablename, field_list):
+        """Programmatically create a new table without calling input().
+
+        Args:
+            tablename: Name of the table (str)
+            field_list: List of (field_name, field_type, field_length) tuples
+                        field_type: 0=str, 1=varstr, 2=int, 3=bool
+
+        Returns:
+            Storage instance with the table initialized
+        """
+        tablename = tablename.strip() if isinstance(tablename, str) else tablename.decode('utf-8').strip()
+
+        dat_path = common_db.data_path(tablename + '.dat')
+        if os.path.exists(dat_path):
+            raise ValueError("Table '%s' already exists" % tablename)
+
+        num_of_fields = len(field_list)
+
+        buf = ctypes.create_string_buffer(BLOCK_SIZE)
+        struct.pack_into('!iii', buf, 0, 0, 0, num_of_fields)
+
+        begin_index = struct.calcsize('!iii')
+        for fname, ftype, flen in field_list:
+            fname_str = fname.strip() if isinstance(fname, str) else fname.strip().decode('utf-8')
+            if len(fname_str) < 10:
+                fname_str = ' ' * (10 - len(fname_str)) + fname_str
+            fname_bytes = fname_str.encode('utf-8')
+            struct.pack_into('!10sii', buf, begin_index, fname_bytes, int(ftype), int(flen))
+            begin_index += struct.calcsize('!10sii')
+
+        with open(dat_path, 'wb') as f:
+            f.write(buf.raw)
+
+        # Open as Storage — since file has data, __init__ will call _load_existing_table
+        storage = cls(tablename)
+        return storage
+
     def _init_new_table(self, tablename):
         """Initialize a new table by prompting user for field definitions."""
         beginIndex = 0
