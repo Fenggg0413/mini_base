@@ -78,11 +78,14 @@ class Schema(object):
 
     def viewTableNames(self):  # to list all the table names in the all.sch
 
-        print ('viewtablenames begin to execute')
+        if common_db.VERBOSE:
+            print ('viewtablenames begin to execute')
         # to be inserted here
         for i in self.headObj.tableNames:
-            print ('Table name is     ', i[0])
-        print ('execute Done!')
+            if common_db.VERBOSE:
+                print ('Table name is     ', i[0])
+        if common_db.VERBOSE:
+            print ('execute Done!')
 
     #------------------------
     # to show the schema of given table
@@ -90,7 +93,8 @@ class Schema(object):
     #       table_name
     #------------------------------
     def viewTableStructure(self, table_name):
-        print(f'the structure of table {table_name} is as follows:')
+        if common_db.VERBOSE:
+            print(f'the structure of table {table_name} is as follows:')
         
         # Iterate through the table name list to find the matching table
         for i in range(len(self.headObj.tableNames)):
@@ -101,8 +105,10 @@ class Schema(object):
                 field_list = self.headObj.tableFields[tname.strip()]
                 
                 # Print the header with proper formatting
-                print("\n{:<15} {:<15} {:<15}".format("Field Name", "Type", "Max Length"))
-                print("-" * 45)
+                if common_db.VERBOSE:
+                    print("\n{:<15} {:<15} {:<15}".format("Field Name", "Type", "Max Length"))
+                if common_db.VERBOSE:
+                    print("-" * 45)
                 
                 # Print each field's information with proper formatting
                 for idx, field in enumerate(field_list):
@@ -125,23 +131,29 @@ class Schema(object):
                                 "Boolean" if field_type == 3 else \
                                 "Unknown"
                         
-                        print("{:<15} {:<15} {:<15}".format(field_name, type_str, field_length))
+                        if common_db.VERBOSE:
+                            print("{:<15} {:<15} {:<15}".format(field_name, type_str, field_length))
                     except Exception as e:
-                        print(f"Error displaying field: {e}")
-                        print(f"Raw field data: {field}")
+                        if common_db.VERBOSE:
+                            print(f"Error displaying field: {e}")
+                        if common_db.VERBOSE:
+                            print(f"Raw field data: {field}")
                 
                 return field_list
         
-        print(f"Table '{table_name}' not found in schema")
+        if common_db.VERBOSE:
+            print(f"Table '{table_name}' not found in schema")
         return None
 
     # ------------------------------------------------
     # constructor of the class
     # ------------------------------------------------
     def __init__(self):
-        print ('__init__ of Schema')
+        if common_db.VERBOSE:
+            print ('__init__ of Schema')
 
-        print ('schema fileName is ' + Schema.fileName)
+        if common_db.VERBOSE:
+            print ('schema fileName is ' + Schema.fileName)
         # 'rb+' 要求文件已存在；首次运行 all.sch 不存在时用 'wb+' 创建空文件，
         # 后续读到空内容会走下方的初始化分支
         mode = 'rb+' if os.path.exists(Schema.fileName) else 'wb+'
@@ -169,18 +181,23 @@ class Schema(object):
             fieldsList = {}
             self.headObj = head_db.Header(nameList, fieldsList,False, 0, self.body_begin_index)
 
-            print ('metaHead of schema has been written to all.sch and the Header ojbect created')
+            if common_db.VERBOSE:
+                print ('metaHead of schema has been written to all.sch and the Header ojbect created')
 
         else:  # there is something in the schema file
 
 
-            print ("there is something  in the all.sch")
+            if common_db.VERBOSE:
+                print ("there is something  in the all.sch")
             # in the following ? denotes bool type and  i denotes int type
             isStored, tempTableNum, tempOffset = struct.unpack_from('!?ii', buf, 0)   #link:https://docs.python.org/2/library/struct.html
 
-            print ("tableNum in schema file is ", tempTableNum)
-            print ("isStored in schema file is ", isStored)
-            print ("offset of body in schema  file is ", tempOffset)
+            if common_db.VERBOSE:
+                print ("tableNum in schema file is ", tempTableNum)
+            if common_db.VERBOSE:
+                print ("isStored in schema file is ", isStored)
+            if common_db.VERBOSE:
+                print ("offset of body in schema  file is ", tempOffset)
 
             Schema.body_begin_index = tempOffset
             nameList=[]
@@ -189,27 +206,32 @@ class Schema(object):
 
             if isStored == False:  # only the meta head exists, but there is no table information in the schema file
                 self.headObj = head_db.Header(nameList, fieldsList, False, 0, BODY_BEGIN_INDEX)
-                print ("there is no table in the file")
+                if common_db.VERBOSE:
+                    print ("there is no table in the file")
 
             else:  # there is information of some tables
 
-                print( "there is at least one table in the schema file ")
+                if common_db.VERBOSE:
+                    print( "there is at least one table in the schema file ")
 
                 # the following is to fetch the tableNameHead from the buffer
                 for i in range(tempTableNum):
                     # fetch the table name in tableNameHead
                     tempName, = struct.unpack_from('!10s', buf,
                                                    META_HEAD_SIZE + i * TABLE_NAME_ENTRY_LEN)  # Note: '!' means no memory alignment
-                    print ("tablename is ", tempName)
+                    if common_db.VERBOSE:
+                        print ("tablename is ", tempName)
 
                     # fetch the number of fields in the table in tableNameHead
                     tempNum, = struct.unpack_from('!i', buf, META_HEAD_SIZE + i * TABLE_NAME_ENTRY_LEN + 10)
-                    print ('number of fields of table ', tempName, ' is ', tempNum)
+                    if common_db.VERBOSE:
+                        print ('number of fields of table ', tempName, ' is ', tempNum)
 
                     # fetch the offset where field names are stored in the body
                     tempPos, = struct.unpack_from('!i', buf,
                                                   META_HEAD_SIZE + i * TABLE_NAME_ENTRY_LEN + 10 + struct.calcsize('i'))
-                    print ("tempPos in body is ", tempPos)
+                    if common_db.VERBOSE:
+                        print ("tempPos in body is ", tempPos)
 
                     tempNameMix = (tempName.strip().decode('utf-8'), tempNum, tempPos)
                     nameList.append(tempNameMix)  # It is a triple
@@ -224,14 +246,18 @@ class Schema(object):
                             # Handle empty field names
                             if not tempFieldName.strip():
                                 tempFieldName = f"field_{j+1}"
-                                print ('field name is empty, using default name:', tempFieldName)
+                                if common_db.VERBOSE:
+                                    print ('field name is empty, using default name:', tempFieldName)
                             else:
                                 tempFieldName = tempFieldName.strip().decode('utf-8')
-                                print ('field name is', tempFieldName)
+                                if common_db.VERBOSE:
+                                    print ('field name is', tempFieldName)
 
-                            print ('field type is', tempFieldType)
+                            if common_db.VERBOSE:
+                                print ('field type is', tempFieldType)
 
-                            print ('filed length is', tempFieldLength)
+                            if common_db.VERBOSE:
+                                print ('filed length is', tempFieldLength)
 
                             tempFieldTuple=(tempFieldName,tempFieldType,tempFieldLength)
 
@@ -249,7 +275,8 @@ class Schema(object):
     # ----------------------------
     def __del__(self):  # write the metahead information in head object to file
 
-        print ("__del__ of class Schema begins to execute")
+        if common_db.VERBOSE:
+            print ("__del__ of class Schema begins to execute")
 
         # __init__ 若中途异常，fileObj/headObj 可能未赋值；防御访问以免在
         # 回收半构造对象时抛 AttributeError 掩盖原始异常
@@ -279,7 +306,8 @@ class Schema(object):
         self.headObj.lenOfTableNum = 0
         self.headObj.offsetOfBody = self.body_begin_index
         self.fileObj.flush()
-        print ("all.sch file has been truncated")
+        if common_db.VERBOSE:
+            print ("all.sch file has been truncated")
 
     # -----------------------------
     # insert a table schema to the schema file
@@ -288,16 +316,19 @@ class Schema(object):
     #       fieldList: the field information list and each element is a tuple(fieldname,fieldtype,fieldlength)
     # -------------------------------
     def appendTable(self, tableName, fieldList):  # it modify the tableNameHead and body of all.sch
-        print ("appendTable begins to execute")
+        if common_db.VERBOSE:
+            print ("appendTable begins to execute")
         tableName = tableName.strip()
 
         if len(tableName) == 0 or len(tableName) > 10 or len(fieldList)==0:
-            print ('tablename is invalid or field list is invalid')
+            if common_db.VERBOSE:
+                print ('tablename is invalid or field list is invalid')
         else:
 
             fieldNum = len(fieldList)
 
-            print ("the following is to write the fields to body in all.sch")
+            if common_db.VERBOSE:
+                print ("the following is to write the fields to body in all.sch")
             fieldBuff = ctypes.create_string_buffer(MAX_FIELD_LEN * len(fieldList))
             beginIndex = 0
             for i in range(len(fieldList)):
@@ -337,7 +368,8 @@ class Schema(object):
             self.fileObj.write(nameBuf)
             self.fileObj.flush()
 
-            print ("to modify the header structure in main memory")
+            if common_db.VERBOSE:
+                print ("to modify the header structure in main memory")
             self.headObj.isStored = True
             self.headObj.lenOfTableNum += 1
             self.headObj.offsetOfBody += fieldNum * MAX_FIELD_LEN
@@ -444,12 +476,14 @@ class Schema(object):
                 self.WriteBuff()
 
             else:# there is no table after the deletion
-                print (False)
+                if common_db.VERBOSE:
+                    print (False)
                 self.headObj.offsetOfBody = BODY_BEGIN_INDEX
                 self.headObj.isStored = False
             return True
         else:
-            print ('Cannot find the table!')
+            if common_db.VERBOSE:
+                print ('Cannot find the table!')
             return False
 
     # ---------------------------

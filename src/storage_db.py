@@ -85,14 +85,17 @@ class Storage(object):
         self.tableName = tablename
 
         if not os.path.exists(common_db.data_path(tablename + '.dat')):
-            print(f'table file {tablename}.dat does not exist')
+            if common_db.VERBOSE:
+                print(f'table file {tablename}.dat does not exist')
             self.f_handle = open(common_db.data_path(tablename + '.dat'), 'wb+')
             self.f_handle.close()
             self.open = False
-            print(f'{tablename}.dat has been created')
+            if common_db.VERBOSE:
+                print(f'{tablename}.dat has been created')
 
         self.f_handle = open(common_db.data_path(tablename + '.dat'), 'rb+')
-        print(f'table file {tablename}.dat has been opened')
+        if common_db.VERBOSE:
+            print(f'table file {tablename}.dat has been opened')
         self.open = True
 
         self.dir_buf = ctypes.create_string_buffer(BLOCK_SIZE)
@@ -192,8 +195,10 @@ class Storage(object):
         """Load field and record data from an existing table file."""
         self.block_id, self.data_block_num, self.num_of_fields = struct.unpack_from('!iii', self.dir_buf, 0)
 
-        print('number of fields is ', self.num_of_fields)
-        print('data_block_num', self.data_block_num)
+        if common_db.VERBOSE:
+            print('number of fields is ', self.num_of_fields)
+        if common_db.VERBOSE:
+            print('data_block_num', self.data_block_num)
         beginIndex = struct.calcsize('!iii')
 
         for i in range(self.num_of_fields):
@@ -202,7 +207,8 @@ class Storage(object):
             field_name_str = field_name.strip().decode('utf-8')
             temp_tuple = (field_name_str, field_type, field_length)
             self.field_name_list.append(temp_tuple)
-            print(f"the {i}th field information (field name,field type,field length) is {temp_tuple}")
+            if common_db.VERBOSE:
+                print(f"the {i}th field information (field name,field type,field length) is {temp_tuple}")
 
     def _load_records(self):
         """Load all records from data blocks into self.record_list."""
@@ -214,7 +220,8 @@ class Storage(object):
             self.f_handle.seek(BLOCK_SIZE * Flag)
             self.active_data_buf = self.f_handle.read(BLOCK_SIZE)
             self.block_id, self.Number_of_Records = struct.unpack_from('!ii', self.active_data_buf, 0)
-            print('Block_ID=%s,   Contains %s data' % (self.block_id, self.Number_of_Records))
+            if common_db.VERBOSE:
+                print('Block_ID=%s,   Contains %s data' % (self.block_id, self.Number_of_Records))
             if self.Number_of_Records > 0:
                 for i in range(self.Number_of_Records):
                     self.record_Position.append((Flag, i))
@@ -387,10 +394,12 @@ class Storage(object):
             if isinstance(name, bytes):
                 name = name.decode('utf-8')
             headers.append(name.strip())
-        print('|    '.join(headers))
+        if common_db.VERBOSE:
+            print('|    '.join(headers))
 
         for record in self.record_list:
-            print(record)
+            if common_db.VERBOSE:
+                print(record)
 
     # --------------------------------
     # to delete  the data file
@@ -459,11 +468,13 @@ class Storage(object):
                         record.append(converted_value)
                         break
                     else:
-                        print(error_msg)
+                        if common_db.VERBOSE:
+                            print(error_msg)
                         continue
 
                 except Exception as e:
-                    print(f"An error occurred: {str(e)}")
+                    if common_db.VERBOSE:
+                        print(f"An error occurred: {str(e)}")
                     continue
 
         return record
@@ -481,19 +492,23 @@ class Storage(object):
         处理记录插入，支持事务
         """
         # Prompt for a new record
-        print('\nEnter a new record:')
+        if common_db.VERBOSE:
+            print('\nEnter a new record:')
         field_list = self.getFieldList()
         record = self.get_record_input(field_list)
         # Insert the record with transaction support if a transaction is active
         success = self.insert_record(record, common_db.current_transaction_id)
 
         if success:
-            print('Record inserted successfully!')
+            if common_db.VERBOSE:
+                print('Record inserted successfully!')
         else:
-            print('Failed to insert record. Please check your input.')
+            if common_db.VERBOSE:
+                print('Failed to insert record. Please check your input.')
 
         # Display all records after insertion
-        print('\nCurrent data in the table:')
+        if common_db.VERBOSE:
+            print('\nCurrent data in the table:')
         self.show_table_data()
 
     def get_record_by_position(self, block_id, record_id):
@@ -607,18 +622,23 @@ class Storage(object):
     # --------------------------------------
     def delete_record(self, field_index, field_value):
         if field_index < 0 or field_index >= len(self.field_name_list):
-            print(f"Field index {field_index} is out of range")
+            if common_db.VERBOSE:
+                print(f"Field index {field_index} is out of range")
             return 0
 
         to_delete_indices = self._find_matching_records(field_index, field_value)
         
         if not to_delete_indices:
             # Print debug information
-            print("No matching records found. Please check if the field value is correct.")
-            print(f"Search condition: Field {field_index} = '{field_value}'")
-            print("Records in the table:")
+            if common_db.VERBOSE:
+                print("No matching records found. Please check if the field value is correct.")
+            if common_db.VERBOSE:
+                print(f"Search condition: Field {field_index} = '{field_value}'")
+            if common_db.VERBOSE:
+                print("Records in the table:")
             for i, record in enumerate(self.record_list):
-                print(f"Record {i}: {record}")
+                if common_db.VERBOSE:
+                    print(f"Record {i}: {record}")
             return 0
 
         # 从索引中删除匹配记录
@@ -758,11 +778,13 @@ class Storage(object):
     # --------------------------------------
     def update_record(self, condition_field_index, condition_field_value, update_field_index, update_field_value, txn_id=None):
         if condition_field_index < 0 or condition_field_index >= len(self.field_name_list):
-            print(f"Condition field index {condition_field_index} is out of range")
+            if common_db.VERBOSE:
+                print(f"Condition field index {condition_field_index} is out of range")
             return 0
             
         if update_field_index < 0 or update_field_index >= len(self.field_name_list):
-            print(f"Update field index {update_field_index} is out of range")
+            if common_db.VERBOSE:
+                print(f"Update field index {update_field_index} is out of range")
             return 0
         
         # Validate the type and length of the update value
@@ -770,7 +792,8 @@ class Storage(object):
         field_length = self.field_name_list[update_field_index][2]
         
         if len(update_field_value) > field_length:
-            print(f"Update value length exceeds maximum field length {field_length}")
+            if common_db.VERBOSE:
+                print(f"Update value length exceeds maximum field length {field_length}")
             return 0
             
         # Convert the update value to the correct type
@@ -782,7 +805,8 @@ class Storage(object):
             else:  # String
                 update_value = update_field_value.strip()
         except ValueError:
-            print(f"Failed to convert update value to the required type")
+            if common_db.VERBOSE:
+                print(f"Failed to convert update value to the required type")
             return 0
             
         # Find indices of records to update
@@ -790,11 +814,15 @@ class Storage(object):
         
         if not to_update_indices:
             # Print debug information
-            print("No matching records found. Please check if the condition field value is correct.")
-            print(f"Search condition: Field {condition_field_index} = '{condition_field_value}'")
-            print("Records in the table:")
+            if common_db.VERBOSE:
+                print("No matching records found. Please check if the condition field value is correct.")
+            if common_db.VERBOSE:
+                print(f"Search condition: Field {condition_field_index} = '{condition_field_value}'")
+            if common_db.VERBOSE:
+                print("Records in the table:")
             for i, record in enumerate(self.record_list):
-                print(f"Record {i}: {record}")
+                if common_db.VERBOSE:
+                    print(f"Record {i}: {record}")
             return 0
 
         # 判断被更新的字段是否有索引

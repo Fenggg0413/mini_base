@@ -139,4 +139,5 @@ def t_error(t):
 def set_lex_handle():
     common_db.global_lexer = lex.lex()
     if common_db.global_lexer is None:
-        print('wrong when the global_lex is created')
+        if common_db.VERBOSE:
+            print('wrong when the global_lex is created')

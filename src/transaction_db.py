@@ -211,7 +211,8 @@ class TransactionManager:
                 else:
                     record_data = bytes(record_data)
         except Exception as e:
-            print(f"无法将record_data转换为字节: {str(e)}")
+            if common_db.VERBOSE:
+                print(f"无法将record_data转换为字节: {str(e)}")
             record_data = b'ERROR: Cannot convert to bytes'
 
         log_header = struct.pack('!IQI20s50s',
@@ -280,7 +281,8 @@ class TransactionManager:
                     status = int(parts[2])
                     return (LOG_RECORD_STATUS, {'txn_id': txn_id, 'status': status})
             except Exception as e:
-                print(f"解析事务状态记录时出错: {str(e)}")
+                if common_db.VERBOSE:
+                    print(f"解析事务状态记录时出错: {str(e)}")
             return None
         
         elif record_type == LOG_RECORD_IMAGE:
@@ -304,16 +306,19 @@ class TransactionManager:
                     'record_data': record_data,
                 })
             except struct.error as e:
-                print(f"解析二进制日志记录时出错: {str(e)}")
+                if common_db.VERBOSE:
+                    print(f"解析二进制日志记录时出错: {str(e)}")
                 return None
         else:
             return None
 
     def _recover_transactions(self):
-        print("开始事务恢复过程...")
+        if common_db.VERBOSE:
+            print("开始事务恢复过程...")
         
         if self.before_image_size == 0 and self.after_image_size == 0:
-            print("没有找到需要恢复的日志")
+            if common_db.VERBOSE:
+                print("没有找到需要恢复的日志")
             return
         
         committed_txns = set()
@@ -336,20 +341,24 @@ class TransactionManager:
                     if txn_id not in committed_txns:
                         active_txns.add(txn_id)
         
-        print(f"分析阶段完成: 找到 {len(committed_txns)} 个已提交事务, {len(active_txns)} 个未完成事务")
+        if common_db.VERBOSE:
+            print(f"分析阶段完成: 找到 {len(committed_txns)} 个已提交事务, {len(active_txns)} 个未完成事务")
         
         for txn_id in committed_txns:
             self.committed_transactions[txn_id] = 'recovered'
         
         if committed_txns:
-            print("开始重做阶段...")
+            if common_db.VERBOSE:
+                print("开始重做阶段...")
             self._redo_committed_transactions(committed_txns)
         
         if active_txns:
-            print("开始撤销阶段...")
+            if common_db.VERBOSE:
+                print("开始撤销阶段...")
             self._undo_uncommitted_transactions(active_txns)
         
-        print("恢复过程完成")
+        if common_db.VERBOSE:
+            print("恢复过程完成")
 
     def _redo_committed_transactions(self, committed_txns):
         self.after_image_file.seek(0)
@@ -368,9 +377,11 @@ class TransactionManager:
                             block_id,
                             int(record_offset)
                         )
-                        print(f"重做: 事务 {entry_data['txn_id']} 写入表 {entry_data['table_name']}, 位置 {entry_data['location']}")
+                        if common_db.VERBOSE:
+                            print(f"重做: 事务 {entry_data['txn_id']} 写入表 {entry_data['table_name']}, 位置 {entry_data['location']}")
                     except Exception as e:
-                        print(f"重做记录时出错: {str(e)}")
+                        if common_db.VERBOSE:
+                            print(f"重做记录时出错: {str(e)}")
 
     def _undo_uncommitted_transactions(self, active_txns):
         undo_entries = []
@@ -396,10 +407,12 @@ class TransactionManager:
                 try:
                     block_id, record_offset = map(int, entry['location'].split(':'))
                     self._write_record_to_file(entry['table_name'], entry['record_data'], block_id, int(record_offset))
-                    print(f"撤销: 事务 {entry['txn_id']} 恢复表 {entry['table_name']}, 位置 {entry['location']}")
+                    if common_db.VERBOSE:
+                        print(f"撤销: 事务 {entry['txn_id']} 恢复表 {entry['table_name']}, 位置 {entry['location']}")
                     processed_locations.add(location_key)
                 except Exception as e:
-                    print(f"撤销记录时出错: {str(e)}")
+                    if common_db.VERBOSE:
+                        print(f"撤销记录时出错: {str(e)}")
 
 
     #----------------------------------
@@ -431,7 +444,8 @@ class TransactionManager:
             # 打开数据文件
             file_path = common_db.data_path(f"{table_name_str}.dat")
             if not os.path.exists(file_path):
-                print(f"数据文件 {file_path} 不存在，无法恢复数据")
+                if common_db.VERBOSE:
+                    print(f"数据文件 {file_path} 不存在，无法恢复数据")
                 return False
                 
             with open(file_path, 'rb+') as f:
@@ -445,7 +459,8 @@ class TransactionManager:
                 
             return True
         except Exception as e:
-            print(f"写入数据文件时出错: {str(e)}")
+            if common_db.VERBOSE:
+                print(f"写入数据文件时出错: {str(e)}")
             return False
     
     #----------------------------------
