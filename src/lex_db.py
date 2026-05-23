@@ -30,6 +30,15 @@ keywords = {
     'bool': 'BOOL_TYPE',
     'true': 'BOOL',
     'false': 'BOOL',
+    'begin': 'BEGIN',
+    'commit': 'COMMIT',
+    'rollback': 'ROLLBACK',
+    'transaction': 'TRANSACTION',
+    'index': 'INDEX',
+    'on': 'ON',
+    'show': 'SHOW',
+    'tables': 'TABLES',
+    'describe': 'DESCRIBE',
 }
 
 tokens = (
@@ -71,6 +80,15 @@ tokens = (
     'SEMI',
     'LPAREN',
     'RPAREN',
+    'BEGIN',
+    'COMMIT',
+    'ROLLBACK',
+    'TRANSACTION',
+    'INDEX',
+    'ON',
+    'SHOW',
+    'TABLES',
+    'DESCRIBE',
 )
 
 t_NEQ = r'<>|!='
