@@ -1,23 +1,24 @@
-# Python 编译缓存
+# Python compiled files
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
 
-# PLY 词法/语法分析器生成文件
+# PLY lexer/parser generated files
 parser.out
 parsetab.py
 lextab.py
 
-# macOS 系统文件
+# macOS
 .DS_Store
 
-# IDE / 编辑器配置
+# IDE
 .idea/
 .vscode/
 
-# 教程目录
+# Tutorial
 tutorial/
 
-# 运行产物日志与索引（.dat/.sch 含测试种子数据，保留追踪）
+# Runtime artifacts (logs and indexes; .dat/.sch contain seed data)
 data/*.log
 data/*.ind

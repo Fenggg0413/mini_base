@@ -39,14 +39,15 @@ def _resolve_table_name(table_name):
 def _scan_table(table_name):
     table_name = _resolve_table_name(table_name)
 
-    storage = storage_db.Storage(table_name.encode('utf-8'))
+    storage = storage_db.Storage(table_name)
     fields = storage.getFieldList()
     records = storage.getRecord()
 
     column_meta = []
     for field_name, field_type, _field_len in fields:
+        name = field_name.strip() if isinstance(field_name, str) else field_name.strip().decode('utf-8', errors='replace')
         column_meta.append({
-            'name': field_name.strip().decode('utf-8', errors='replace'),
+            'name': name,
             'type': field_type,
         })
 

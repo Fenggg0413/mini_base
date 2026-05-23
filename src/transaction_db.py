@@ -191,91 +191,23 @@ class TransactionManager:
     #   ValueError: 如果事务不存在或不处于活动状态
     #----------------------------------
     def log_before_image(self, txn_id, table_name, record_data, block_id, record_offset):
-        # 确保事务存在且活动
         if txn_id not in self.active_transactions or self.active_transactions[txn_id][1] != TRANSACTION_ACTIVE:
             raise ValueError(f"Transaction {txn_id} is not active")
-        
-        # 构造日志条目
-        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        # 确保表名是字节类型
-        if isinstance(table_name, str):
-            table_name_bytes = table_name.encode('utf-8')
-        else:
-            table_name_bytes = table_name
-            
-        # 确保位置信息是字节类型
-        location_str = f"{block_id}:{record_offset}"
-        location_bytes = location_str.encode('utf-8')
-        
-        # 确保record_data是字节类型
-        try:
-            if not isinstance(record_data, bytes):
-                if hasattr(record_data, 'raw'):
-                    record_data = record_data.raw
-                else:
-                    record_data = bytes(record_data)
-        except Exception as e:
-            print(f"无法将record_data转换为字节: {str(e)}")
-            record_data = b'ERROR: Cannot convert to bytes'
-        
-        # 前像日志条目头部
-        log_header = struct.pack('!IQI20s50s', 
-                                txn_id,  # 事务ID
-                                int(datetime.datetime.now().timestamp() * 1000),  # 时间戳（毫秒）
-                                len(record_data),  # 记录长度
-                                table_name_bytes,  # 表名
-                                location_bytes)  # 位置信息
-        
-        # 写入日志条目
-        self.before_image_file.seek(0, 2)  # 移动到文件末尾
-        self.before_image_file.write(log_header)
-        self.before_image_file.write(record_data)
-        self.before_image_size = self.before_image_file.tell()
-        
-        # 确保数据写入磁盘
-        self.before_image_file.flush()
-        os.fsync(self.before_image_file.fileno())
-        
-        return True
+        return self._log_image(self.before_image_file, txn_id, table_name, record_data, block_id, record_offset, 'before')
 
-
-
-    #----------------------------------
-    # 记录后像到日志文件
-    # 功能：
-    #   在对记录进行修改后，将新的记录数据写入后像日志
-    # 参数：
-    #   txn_id: 事务ID
-    #   table_name: 表名（字符串或字节类型）
-    #   record_data: 记录的新数据
-    #   block_id: 记录所在的块ID
-    #   record_offset: 记录在块内的偏移量
-    # 返回：
-    #   True: 记录成功
-    # 异常：
-    #   ValueError: 如果事务不存在或不处于活动状态
-    #----------------------------------
     def log_after_image(self, txn_id, table_name, record_data, block_id, record_offset):
-
-        # 确保事务存在且活动
         if txn_id not in self.active_transactions or self.active_transactions[txn_id][1] != TRANSACTION_ACTIVE:
             raise ValueError(f"Transaction {txn_id} is not active")
-        
-        # 构造日志条目
-        timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        # 确保表名是字节类型
+        return self._log_image(self.after_image_file, txn_id, table_name, record_data, block_id, record_offset, 'after')
+
+    def _log_image(self, log_file, txn_id, table_name, record_data, block_id, record_offset, image_type):
         if isinstance(table_name, str):
             table_name_bytes = table_name.encode('utf-8')
         else:
             table_name_bytes = table_name
-            
-        # 确保位置信息是字节类型
-        location_str = f"{block_id}:{record_offset}"
-        location_bytes = location_str.encode('utf-8')
-        
-        # 确保record_data是字节类型
+
+        location_bytes = f"{block_id}:{record_offset}".encode('utf-8')
+
         try:
             if not isinstance(record_data, bytes):
                 if hasattr(record_data, 'raw'):
@@ -285,25 +217,26 @@ class TransactionManager:
         except Exception as e:
             print(f"无法将record_data转换为字节: {str(e)}")
             record_data = b'ERROR: Cannot convert to bytes'
-        
-        # 后像日志条目头部
-        log_header = struct.pack('!IQI20s50s', 
-                                txn_id,  # 事务ID
-                                int(datetime.datetime.now().timestamp() * 1000),  # 时间戳（毫秒）
-                                len(record_data),  # 记录长度
-                                table_name_bytes,  # 表名
-                                location_bytes)  # 位置信息
-        
-        # 写入日志条目
-        self.after_image_file.seek(0, 2)  # 移动到文件末尾
-        self.after_image_file.write(log_header)
-        self.after_image_file.write(record_data)
-        self.after_image_size = self.after_image_file.tell()
-        
-        # 确保数据写入磁盘
-        self.after_image_file.flush()
-        os.fsync(self.after_image_file.fileno())
-        
+
+        log_header = struct.pack('!IQI20s50s',
+                                txn_id,
+                                int(datetime.datetime.now().timestamp() * 1000),
+                                len(record_data),
+                                table_name_bytes,
+                                location_bytes)
+
+        log_file.seek(0, 2)
+        log_file.write(log_header)
+        log_file.write(record_data)
+
+        if image_type == 'before':
+            self.before_image_size = log_file.tell()
+        else:
+            self.after_image_size = log_file.tell()
+
+        log_file.flush()
+        os.fsync(log_file.fileno())
+
         return True
 
 
@@ -616,15 +549,8 @@ class TransactionManager:
             # 打开数据文件
             file_path = common_db.data_path(f"{table_name_str}.dat")
             if not os.path.exists(file_path):
-                # 尝试使用字节类型的表名
-                if isinstance(table_name, str):
-                    file_path = common_db.data_path(table_name.encode('utf-8') + b'.dat')
-                else:
-                    file_path = common_db.data_path(table_name + b'.dat')
-
-                if not os.path.exists(file_path):
-                    print(f"数据文件 {file_path} 不存在，无法恢复数据")
-                    return False
+                print(f"数据文件 {file_path} 不存在，无法恢复数据")
+                return False
                 
             with open(file_path, 'rb+') as f:
                 # 定位到指定块和偏移
@@ -657,7 +583,7 @@ class TransactionManager:
             
             if hasattr(self, 'after_image_file') and self.after_image_file:
                 self.after_image_file.close()
-        except:
+        except Exception:
             pass
 
 # 全局事务管理器实例

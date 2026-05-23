@@ -62,10 +62,11 @@ BODY_BEGIN_INDEX=META_HEAD_SIZE+TABLE_NAME_HEAD_SIZE            # Intitially, wh
 # input:
 #       tableName: the table name       
 # -------------------------------
-def fillTableName(tableName): # it should be 10 bytes
-    if len(tableName.strip())<MAX_TABLE_NAME_LEN:
-        tableName=(' '*(MAX_TABLE_NAME_LEN-len(tableName.strip()))).encode('utf-8')+tableName.strip()
-        return tableName
+def fillTableName(tableName):
+    name = tableName.strip()
+    if len(name) < MAX_TABLE_NAME_LEN:
+        name = ' ' * (MAX_TABLE_NAME_LEN - len(name)) + name
+    return name
 
 
 class Schema(object):
@@ -74,12 +75,6 @@ class Schema(object):
     '''
 
     fileName = common_db.data_path('all.sch')  # the schema file name
-    count = 0  # there should be only one object in the program
-
-    @staticmethod
-    def how_many():  # give the count of instances
-        return Schema.count
-
 
     def viewTableNames(self):  # to list all the table names in the all.sch
 
@@ -95,13 +90,15 @@ class Schema(object):
     #       table_name
     #------------------------------
     def viewTableStructure(self, table_name):
-        print('the structure of table '.encode('utf-8')+table_name+' is as follows:'.encode('utf-8'))
+        print(f'the structure of table {table_name} is as follows:')
         
         # Iterate through the table name list to find the matching table
         for i in range(len(self.headObj.tableNames)):
-            if self.headObj.tableNames[i][0].strip() == table_name.strip():
-                # Get the field list for the table
-                field_list = self.headObj.tableFields[table_name.strip()]
+            tname = self.headObj.tableNames[i][0]
+            if isinstance(tname, bytes):
+                tname = tname.decode('utf-8')
+            if tname.strip() == table_name.strip():
+                field_list = self.headObj.tableFields[tname.strip()]
                 
                 # Print the header with proper formatting
                 print("\n{:<15} {:<15} {:<15}".format("Field Name", "Type", "Max Length"))
@@ -110,26 +107,24 @@ class Schema(object):
                 # Print each field's information with proper formatting
                 for idx, field in enumerate(field_list):
                     try:
-                        if isinstance(field[0], bytes):
-                            field_name = field[0].strip().decode('utf-8', errors='replace')
+                        field_name = field[0]
+                        if isinstance(field_name, bytes):
+                            field_name = field_name.strip().decode('utf-8', errors='replace')
                         else:
-                            field_name = field[0].strip()
-                            
-                        # Handle empty field names
+                            field_name = field_name.strip()
+                        
                         if not field_name:
                             field_name = f"field_{idx+1}"
-                            
+                        
                         field_type = field[1]
                         field_length = field[2]
                         
-                        # Convert numeric type to string representation
                         type_str = "String" if field_type == 0 else \
                                 "VarString" if field_type == 1 else \
                                 "Integer" if field_type == 2 else \
                                 "Boolean" if field_type == 3 else \
                                 "Unknown"
                         
-                        # Use string formatting for aligned output
                         print("{:<15} {:<15} {:<15}".format(field_name, type_str, field_length))
                     except Exception as e:
                         print(f"Error displaying field: {e}")
@@ -137,12 +132,7 @@ class Schema(object):
                 
                 return field_list
         
-        # If table is not found
-        if isinstance(table_name, bytes):
-            table_name_str = table_name.decode('utf-8')
-        else:
-            table_name_str = table_name
-        print(f"Table '{table_name_str}' not found in schema")
+        print(f"Table '{table_name}' not found in schema")
         return None
 
     # ------------------------------------------------
@@ -163,7 +153,6 @@ class Schema(object):
         buf = self.fileObj.read(bufLen)
 
         #the following is to print the content of the buffer
-        buf.strip()
         if len(buf) == 0:  # for the first time, there is nothing in the schema file
             self.body_begin_index = BODY_BEGIN_INDEX
             buf = struct.pack('!?ii', False, 0, self.body_begin_index)  # is_stored, tablenum,offset
@@ -222,7 +211,7 @@ class Schema(object):
                                                   META_HEAD_SIZE + i * TABLE_NAME_ENTRY_LEN + 10 + struct.calcsize('i'))
                     print ("tempPos in body is ", tempPos)
 
-                    tempNameMix = (tempName.strip(), tempNum, tempPos)
+                    tempNameMix = (tempName.strip().decode('utf-8'), tempNum, tempPos)
                     nameList.append(tempNameMix)  # It is a triple
 
                     # the following is to fetch field information from body section and each field is  (fieldname,fieldtype,fieldlength)
@@ -234,10 +223,11 @@ class Schema(object):
 
                             # Handle empty field names
                             if not tempFieldName.strip():
-                                tempFieldName = f"field_{j+1}".encode('utf-8')
+                                tempFieldName = f"field_{j+1}"
                                 print ('field name is empty, using default name:', tempFieldName)
                             else:
-                                print ('field name is ', tempFieldName.strip())
+                                tempFieldName = tempFieldName.strip().decode('utf-8')
+                                print ('field name is', tempFieldName)
 
                             print ('field type is', tempFieldType)
 
@@ -248,7 +238,7 @@ class Schema(object):
                             fields.append(tempFieldTuple)
 
 
-                        fieldsList[tempName.strip()]=fields
+                        fieldsList[tempName.strip().decode('utf-8')]=fields
 
                 # the main memory structure for schema is constructed
 
@@ -299,7 +289,7 @@ class Schema(object):
     # -------------------------------
     def appendTable(self, tableName, fieldList):  # it modify the tableNameHead and body of all.sch
         print ("appendTable begins to execute")
-        tableName.strip()
+        tableName = tableName.strip()
 
         if len(tableName) == 0 or len(tableName) > 10 or len(fieldList)==0:
             print ('tablename is invalid or field list is invalid')
@@ -312,19 +302,18 @@ class Schema(object):
             beginIndex = 0
             for i in range(len(fieldList)):
                 (fieldName,fieldType,fieldLength)=fieldList[i]
+                # Convert bytes field names to str for internal use
+                if isinstance(fieldName, bytes):
+                    fieldName = fieldName.decode('utf-8')
                 # Ensure field name is not empty
                 if not fieldName or fieldName.strip() == '':
-                    fieldName = f"field_{i+1}"  # Use default name
-                
-                # Handle string encoding
-                if isinstance(fieldName, str):
-                    fieldName = fieldName.encode('utf-8')
+                    fieldName = f"field_{i+1}"
                 
                 # Ensure field name does not exceed 10 bytes
                 if len(fieldName) > 10:
                     fieldName = fieldName[:10]
-                # Pad field name to 10 bytes
-                filledFieldName = fieldName.ljust(10, b' ')
+                # Pad field name to 10 bytes and encode for struct.pack
+                filledFieldName = fieldName.ljust(10).encode('utf-8')
                 
                 # Pack field information into buffer
                 struct.pack_into('!10sii', fieldBuff, beginIndex, filledFieldName, int(fieldType), int(fieldLength))
@@ -356,8 +345,13 @@ class Schema(object):
             self.headObj.lenOfTableNum += 1
             self.headObj.offsetOfBody += fieldNum * MAX_FIELD_LEN
             self.headObj.tableNames.append(nameContent)
-            # fieldTuple = tuple(fieldList)
-            self.headObj.tableFields[tableName.strip()]=fieldList
+            # Store field list with str field names
+            str_field_list = []
+            for fname, ftype, flen in fieldList:
+                if isinstance(fname, bytes):
+                    fname = fname.decode('utf-8')
+                str_field_list.append((fname, ftype, flen))
+            self.headObj.tableFields[tableName]=str_field_list
 
     # -------------------------------
     # to determine whether the table named table_name exist, depending on the main memory structures
@@ -367,11 +361,8 @@ class Schema(object):
     #       true or false
     # -------------------------------------------------------
     def find_table(self, table_name):
-        Tables = map(lambda x: x[0], self.headObj.tableNames)
-        if table_name in Tables:
-            return True
-        else:
-            return False
+        table_names = [x[0].strip().decode('utf-8') if isinstance(x[0], bytes) else x[0].strip() for x in self.headObj.tableNames]
+        return table_name.strip() in table_names
 
 
 
@@ -391,18 +382,24 @@ class Schema(object):
         
         for idx in range(len(self.headObj.tableNames)):
             tmp_tableName = self.headObj.tableNames[idx][0]
-            if len(tmp_tableName)<10:
-                tmp_tableName = (' ' * (10 - len(tmp_tableName.strip()))).encode("utf-8") + tmp_tableName
+            if isinstance(tmp_tableName, str):
+                tmp_tableName = tmp_tableName.strip()
+            else:
+                tmp_tableName = tmp_tableName.strip().decode('utf-8')
+            if len(tmp_tableName) < 10:
+                tmp_tableName = ' ' * (10 - len(tmp_tableName)) + tmp_tableName
+            # struct.pack requires bytes for '10s' format
+            tmp_tableName_bytes = tmp_tableName.encode('utf-8')
 
-            # write (tablename,numberoffields,offsetinbody) to buffer
-            struct.pack_into('!10sii', buf, META_HEAD_SIZE + idx * TABLE_NAME_ENTRY_LEN, tmp_tableName,
+            struct.pack_into('!10sii', buf, META_HEAD_SIZE + idx * TABLE_NAME_ENTRY_LEN, tmp_tableName_bytes,
                              self.headObj.tableNames[idx][1],self.headObj.tableNames[idx][2])
 
-            # write the field information of each table into the buffer
-            table_name = self.headObj.tableNames[idx][0].strip()
+            table_name = self.headObj.tableNames[idx][0].strip() if isinstance(self.headObj.tableNames[idx][0], str) else self.headObj.tableNames[idx][0].strip().decode('utf-8')
             field_list = self.headObj.tableFields[table_name]
             for idj in range(len(field_list)):
                 (tempFieldName,tempFieldType,tempFieldLength) = field_list[idj]
+                if isinstance(tempFieldName, str):
+                    tempFieldName = tempFieldName.encode('utf-8')
                 struct.pack_into('!10sii', buf, self.headObj.tableNames[idx][2]+idj*MAX_FIELD_LEN,
                                 tempFieldName, tempFieldType, tempFieldLength)
         
@@ -420,7 +417,12 @@ class Schema(object):
     def delete_table_schema(self, table_name):
         tmpIndex=-1
         for i in range(len(self.headObj.tableNames)):
-            if self.headObj.tableNames[i][0].strip()==table_name.strip():
+            tname = self.headObj.tableNames[i][0]
+            if isinstance(tname, bytes):
+                tname = tname.strip().decode('utf-8')
+            else:
+                tname = tname.strip()
+            if tname == table_name.strip():
                 tmpIndex=i
         if tmpIndex>=0:
 
@@ -433,9 +435,9 @@ class Schema(object):
 
             
             if len(self.headObj.tableNames)>0: # there is at least one table after the deletion
-                name_list = list(map(lambda x: x[0], self.headObj.tableNames))
-                field_num_per_table = list(map(lambda x: x[1], self.headObj.tableNames))
-                table_offset= list(map(lambda x: x[2], self.headObj.tableNames))
+                name_list = [x[0].strip().decode('utf-8') if isinstance(x[0], bytes) else x[0].strip() for x in self.headObj.tableNames]
+                field_num_per_table = [x[1] for x in self.headObj.tableNames]
+                table_offset = [x[2] for x in self.headObj.tableNames]
 
                 table_offset[0] = BODY_BEGIN_INDEX
                 for idx in range(1,len(table_offset)):
@@ -461,4 +463,4 @@ class Schema(object):
     #       table_name_list: the returned list of table names
     # --------------------------------
     def get_table_name_list(self):
-        return map(lambda x:x[0],self.headObj.tableNames)
+        return [x[0].strip().decode('utf-8') if isinstance(x[0], bytes) else x[0].strip() for x in self.headObj.tableNames]

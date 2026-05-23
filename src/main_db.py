@@ -24,7 +24,7 @@ from . import transaction_db  # 导入事务管理模块
 PROMPT_STR = 'Input your choice  \n1:add a new table structure and data \n2:delete a table structure and data\
 \n3:view a table structure and data \n4:delete all tables and data \n5:select from where clause\
 \n6:delete a row according to field keyword \n7:update a row according to field keyword \
-\n8:begin a transaction \n9:commit transaction \n. to quit):\n'
+\n8:begin a transaction \n9:commit transaction \n10:abort transaction \n. to quit):\n'
 
 
 # --------------------------
@@ -50,22 +50,14 @@ def main():
 
         if choice == '1':  # add a new table and lines of data
             tableName = input('please enter your new table name:')
-            if isinstance(tableName, str):
-                tableName = tableName.encode('utf-8')
-            #  tableName not in all.sch
             insertFieldList = []
             if tableName.strip() not in schemaObj.get_table_name_list():
-                # Create a new table
                 dataObj = storage_db.Storage(tableName)
-
                 insertFieldList = dataObj.getFieldList()
-
-                schemaObj.appendTable(tableName, insertFieldList)  # add the table structure
+                schemaObj.appendTable(tableName, insertFieldList)
             else:
                 dataObj = storage_db.Storage(tableName)
-                # Display table structure
                 schemaObj.viewTableStructure(tableName)
-                # Handle record insertion
                 dataObj.insert_records_from_input()
                 del dataObj
 
@@ -78,18 +70,15 @@ def main():
         elif choice == '2':  # delete a table from schema file and data file
 
             table_name = input('please input the name of the table to be deleted:')
-            if isinstance(table_name,str):
-                table_name=table_name.encode('utf-8')
             if schemaObj.find_table(table_name.strip()):
-                if schemaObj.delete_table_schema(
-                        table_name):  # delete the schema from the schema file
-                    dataObj = storage_db.Storage(table_name)  # create an object for the data of table
-                    dataObj.delete_table_data(table_name.strip())  # delete table content from the table file
+                if schemaObj.delete_table_schema(table_name.strip()):
+                    dataObj = storage_db.Storage(table_name.strip())
+                    dataObj.delete_table_data(table_name.strip())
                     del dataObj
                 else:
                     print('the deletion from schema file fail')
             else:
-                print('there is no table '.encode('utf-8') + table_name + ' in the schema file'.encode('utf-8'))
+                print(f'there is no table {table_name.strip()} in the schema file')
 
 
             choice = input(PROMPT_STR)
@@ -100,13 +89,11 @@ def main():
 
             print(schemaObj.headObj.tableNames)
             table_name = input('please input the name of the table to be displayed:')
-            if isinstance(table_name,str):
-                table_name=table_name.encode('utf-8')
             if table_name.strip():
                 if schemaObj.find_table(table_name.strip()):
                     schemaObj.viewTableStructure(table_name)
-                    dataObj = storage_db.Storage(table_name)  # create an object for the data of table
-                    dataObj.show_table_data()  # view all the data of the table
+                    dataObj = storage_db.Storage(table_name.strip())
+                    dataObj.show_table_data()
                     del dataObj
                 else:
                     print('table name is None')
@@ -119,8 +106,7 @@ def main():
             table_name_list = list(schemaObj.get_table_name_list())
             # to be inserted here -> to delete from data files
             for i in range(len(table_name_list)):
-                table_name = table_name_list[i]
-                table_name.strip()
+                table_name = table_name_list[i].strip()
 
                 if table_name:
                     stObj = storage_db.Storage(table_name)
@@ -155,40 +141,31 @@ def main():
             table_name = input('please input the name of the table to be deleted from:')
             field_input = input('please input the field name and the corresponding keyword (fieldname:keyword):')
             
-            # Parse the field name and keyword
             if ":" in field_input:
                 field_name, field_value = field_input.split(":", 1)
                 field_name = field_name.strip()
                 field_value = field_value.strip()
                 
-                if isinstance(table_name, str):
-                    table_name = table_name.encode('utf-8')
-                
-                # Verify if the table exists
                 if schemaObj.find_table(table_name.strip()):
-                    # Create a storage object for the table
-                    dataObj = storage_db.Storage(table_name)
-                    
-                    # Get field information
+                    dataObj = storage_db.Storage(table_name.strip())
                     field_list = dataObj.getFieldList()
                     
-                    # Find the index of the field in the record
                     field_index = -1
                     for i, field in enumerate(field_list):
-                        if field[0].strip().decode('utf-8') == field_name:
+                        fname = field[0].strip()
+                        if isinstance(fname, bytes):
+                            fname = fname.decode('utf-8')
+                        if fname == field_name:
                             field_index = i
                             break
                     
                     if field_index == -1:
-                        print(f"Field '{field_name}' does not exist in table '{table_name.decode('utf-8')}'")
+                        print(f"Field '{field_name}' does not exist in table '{table_name.strip()}'")
                     else:
-                        # Directly delete records matching the condition
                         deleted_count = dataObj.delete_record(field_index, field_value)
                         
                         if deleted_count > 0:
                             print(f"Deleted {deleted_count} record(s).")
-                            
-                            # Display the updated table data
                             print("\nCurrent data in the table:")
                             dataObj.show_table_data()
                         else:
@@ -196,7 +173,7 @@ def main():
                     
                     del dataObj
                 else:
-                    print('Table ' + table_name.decode('utf-8') + ' does not exist')
+                    print(f'Table {table_name.strip()} does not exist')
             else:
                 print("Input format error! Correct format: fieldname:keyword")
 
@@ -209,52 +186,43 @@ def main():
             update_field = input('please input the field name to be updated:')
             update_value = input('please input the new value:')
             
-            if isinstance(table_name, str):
-                table_name = table_name.encode('utf-8')
-                
-            # Verify if the table exists
             if schemaObj.find_table(table_name.strip()):
-                # Create a storage object for the table
-                dataObj = storage_db.Storage(table_name)
-                
-                # Get field information
+                dataObj = storage_db.Storage(table_name.strip())
                 field_list = dataObj.getFieldList()
                 
-                # Find the indices of the fields in the record
                 condition_field_index = -1
                 update_field_index = -1
                 
                 for i, field in enumerate(field_list):
-                    if field[0].strip().decode('utf-8') == field_name:
+                    fname = field[0].strip()
+                    if isinstance(fname, bytes):
+                        fname = fname.decode('utf-8')
+                    if fname == field_name:
                         condition_field_index = i
-                    if field[0].strip().decode('utf-8') == update_field:
+                    if fname == update_field:
                         update_field_index = i
                 
                 if condition_field_index == -1:
-                    print(f"Field '{field_name}' does not exist in table '{table_name.decode('utf-8')}'")
+                    print(f"Field '{field_name}' does not exist in table '{table_name.strip()}'")
                 elif update_field_index == -1:
-                    print(f"Field '{update_field}' does not exist in table '{table_name.decode('utf-8')}'")
+                    print(f"Field '{update_field}' does not exist in table '{table_name.strip()}'")
                 else:
-                    # Validate and convert the update value
                     field_type = field_list[update_field_index][1]
                     max_length = field_list[update_field_index][2]
                     
                     valid, converted_value, error_msg = common_db.validate_and_convert_value(update_value, field_type, max_length)
                     
                     if valid:
-                        # Update the record with transaction support if a transaction is active
                         updated_count = dataObj.update_record(
                             condition_field_index, 
                             keyword, 
                             update_field_index, 
                             converted_value,
-                            common_db.current_transaction_id  # 传递事务ID
+                            common_db.current_transaction_id
                         )
                         
                         if updated_count > 0:
                             print(f"Updated {updated_count} record(s).")
-                            
-                            # Display the updated table data
                             print("\nCurrent data in the table:")
                             dataObj.show_table_data()
                         else:
@@ -264,7 +232,7 @@ def main():
                 
                 del dataObj
             else:
-                print('Table ' + table_name.decode('utf-8') + ' does not exist')
+                print(f'Table {table_name.strip()} does not exist')
                 
             choice = input(PROMPT_STR)
             
@@ -277,23 +245,35 @@ def main():
                 txn_manager = transaction_db.get_transaction_manager()
                 common_db.current_transaction_id = txn_manager.begin_transaction()
                 print(f"Transaction {common_db.current_transaction_id} started. All subsequent operations will be part of this transaction.")
-                print("Use option 9 to commit the transaction, or restart the program to abort it.")
+                print("Use option 9 to commit, or option 10 to abort the transaction.")
             
             choice = input(PROMPT_STR)
             
         elif choice == '9':  # commit transaction
-            # 检查是否有活动事务
             if common_db.current_transaction_id is None:
                 print("No active transaction to commit. Start a transaction with option 8 first.")
             else:
-                # 获取事务管理器并提交事务
                 txn_manager = transaction_db.get_transaction_manager()
                 try:
                     txn_manager.commit_transaction(common_db.current_transaction_id)
                     print(f"Transaction {common_db.current_transaction_id} committed successfully.")
-                    common_db.current_transaction_id = None  # 重置事务ID
+                    common_db.current_transaction_id = None
                 except Exception as e:
                     print(f"Failed to commit transaction: {str(e)}")
+            
+            choice = input(PROMPT_STR)
+        
+        elif choice == '10':  # abort transaction
+            if common_db.current_transaction_id is None:
+                print("No active transaction to abort. Start a transaction with option 8 first.")
+            else:
+                txn_manager = transaction_db.get_transaction_manager()
+                try:
+                    txn_manager.abort_transaction(common_db.current_transaction_id)
+                    print(f"Transaction {common_db.current_transaction_id} aborted.")
+                    common_db.current_transaction_id = None
+                except Exception as e:
+                    print(f"Failed to abort transaction: {str(e)}")
             
             choice = input(PROMPT_STR)
         
@@ -301,6 +281,10 @@ def main():
             print('main loop finishies')
             del schemaObj
             break
+
+        else:
+            if choice not in ['1','2','3','4','5','6','7','8','9','10']:
+                print(f"Invalid choice: '{choice}'. Please enter a number 1-10 or '.' to quit.")
 
     print('main loop finish!')
 

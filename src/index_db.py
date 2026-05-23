@@ -67,11 +67,14 @@ class Index(object):
     def __init__(self,tablename):
 
         print ("__init__ of ",Index.__name__)
-        tablename.strip()
+        tablename = tablename.strip()
+        self.open = False
+        self.first_block_buf = None
         if  not os.path.exists(common_db.data_path(tablename+'.ind')): # in this case, the index file does not exist
 
             print ('index file '+tablename+'.ind does not exist')
             self.f_handle=open(common_db.data_path(tablename+'.ind'),'wb+')
+            self.first_block_buf = ctypes.create_string_buffer(common_db.BLOCK_SIZE)
             print (tablename+'.ind has been created')
             
         else: # the index file exists and we read its first block
@@ -105,7 +108,8 @@ class Index(object):
     #-----------------------------------
     def __del__(self):
         print ("__del__ of ",Index.__name__)
-        self.f_handle.close()
+        if getattr(self, 'open', False) and getattr(self, 'f_handle', None):
+            self.f_handle.close()
         self.open=False
 
 
@@ -115,8 +119,7 @@ class Index(object):
     #-----------------------------------
     def create_index(self,index_field):
         print ('create_index begins to execute')
-        #field_value_address=[] # its element is a tuple (field_value,address)
-        # to be inserted here
+        raise NotImplementedError("create_index not implemented")
 
     #-----------------------------
     # get the internal node to follow
@@ -128,8 +131,7 @@ class Index(object):
     #       the block_id to follow
     #--------------------------------
     def get_next_block_ptr(self,current_value,index_key_list,index_ptr_list):
-        ret_value=-1
-        return ret_value
+        raise NotImplementedError("get_next_block_ptr not implemented")
 
     
     #---------------------------------
@@ -179,7 +181,7 @@ class Index(object):
     def insert_index_entry(self,field_value,block_id,offset):
         print ('insert_index_entry begins to execute')
         if len(field_value.strip())>0 and block_id>0 and offset>0:# the following is to insert an index entry into the index file
-            if len(self.first_block_buf.strip())==0:# there is no data in the index file
+            if self.first_block_buf is None or len(self.first_block_buf.strip())==0:# there is no data in the index file
                 # to prepare the data in the index node, which is stored in block 1 
                 first_index_block=ctypes.create_string_buffer(common_db.BLOCK_SIZE)
 
@@ -315,9 +317,9 @@ class Index(object):
 
 
 
-# the following is to test
-index_obj=Index('all');
-index_obj.insert_index_entry('a',4,1)
-#test()
+if __name__ == '__main__':
+    index_obj = Index('all')
+    index_obj.insert_index_entry('a', 4, 1)
+    test()
 
         

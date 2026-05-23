@@ -17,9 +17,9 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 
 def data_path(name):
-    """拼接 data/ 目录下的文件路径，兼容 str 与 bytes 文件名。"""
+    """拼接 data/ 目录下的文件路径。name 应为 str 类型。"""
     if isinstance(name, bytes):
-        return os.path.join(DATA_DIR.encode('utf-8'), name)
+        name = name.decode('utf-8')
     return os.path.join(DATA_DIR, name)
 
 

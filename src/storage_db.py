@@ -77,100 +77,97 @@ class Storage(object):
     #       tablename
     # -------------------------------------
     def __init__(self, tablename):
-        # print "__init__ of ",Storage.__name__,"begins to execute"
-        tablename.strip()
+        tablename = tablename.strip() if isinstance(tablename, str) else tablename.decode('utf-8').strip()
 
         self.record_list = []
         self.record_Position = []
         self.tableName = tablename
 
-        if not os.path.exists(common_db.data_path(tablename + '.dat'.encode('utf-8'))):  # the file corresponding to the table does not exist
-            print('table file '.encode('utf-8') + tablename + '.dat does not exists'.encode('utf-8'))
-            self.f_handle = open(common_db.data_path(tablename + '.dat'.encode('utf-8')), 'wb+')
+        if not os.path.exists(common_db.data_path(tablename + '.dat')):
+            print(f'table file {tablename}.dat does not exist')
+            self.f_handle = open(common_db.data_path(tablename + '.dat'), 'wb+')
             self.f_handle.close()
             self.open = False
-            print(tablename + '.dat has been created'.encode('utf-8'))
+            print(f'{tablename}.dat has been created')
 
-        self.f_handle = open(common_db.data_path(tablename + '.dat'.encode('utf-8')), 'rb+')
-        print('table file '.encode('utf-8') + tablename + '.dat has been opened'.encode('utf-8'))
+        self.f_handle = open(common_db.data_path(tablename + '.dat'), 'rb+')
+        print(f'table file {tablename}.dat has been opened')
         self.open = True
 
         self.dir_buf = ctypes.create_string_buffer(BLOCK_SIZE)
         self.f_handle.seek(0)
         self.dir_buf = self.f_handle.read(BLOCK_SIZE)
-
-        self.dir_buf.strip()
-        my_len = len(self.dir_buf)
+        my_len = len(self.dir_buf) if self.dir_buf else 0
         self.field_name_list = []
+
+        if my_len == 0:
+            self._init_new_table(tablename)
+        else:
+            self._load_existing_table()
+
+        self._load_records()
+
+    def _init_new_table(self, tablename):
+        """Initialize a new table by prompting user for field definitions."""
         beginIndex = 0
+        self.num_of_fields = int(input(
+            "please input the number of feilds in table " + tablename + ":"))
+        if self.num_of_fields <= 0:
+            self.data_block_num = 0
+            return
 
-        if my_len == 0:  # there is no data in the block 0, we should write meta data into the block 0
-            if isinstance(tablename, bytes):
-                self.num_of_fields = input(
-                    "please input the number of feilds in table " + tablename.decode('utf-8') + ":")
-            else:
-                self.num_of_fields = input(
-                    "please input the number of feilds in table " + tablename + ":")
-            if int(self.num_of_fields) > 0:
+        self.dir_buf = ctypes.create_string_buffer(BLOCK_SIZE)
+        self.block_id = 0
+        self.data_block_num = 0
+        struct.pack_into('!iii', self.dir_buf, beginIndex, 0, 0, int(self.num_of_fields))
 
-                self.dir_buf = ctypes.create_string_buffer(BLOCK_SIZE)
-                self.block_id = 0
-                self.data_block_num = 0
-                struct.pack_into('!iii', self.dir_buf, beginIndex, 0, 0,
-                                 int(self.num_of_fields))  # block_id,number_of_data_blocks,number_of_fields
+        beginIndex = beginIndex + struct.calcsize('!iii')
 
-                beginIndex = beginIndex + struct.calcsize('!iii')
+        for i in range(int(self.num_of_fields)):
+            field_name = input("please input the name of field " + str(i) + " :")
 
-                # the following is to write the field name,field type and field length into the buffer in turn
-                for i in range(int(self.num_of_fields)):
-                    field_name = input("please input the name of field " + str(i) + " :")
+            if len(field_name) < 10:
+                field_name = ' ' * (10 - len(field_name.strip())) + field_name
 
-                    if len(field_name) < 10:
-                        field_name = ' ' * (10 - len(field_name.strip())) + field_name
+            while True:
+                field_type = input(
+                    "please input the type of field(0-> str; 1-> varstr; 2-> int; 3-> boolean) " + str(i) + " :")
+                if int(field_type) in [0, 1, 2, 3]:
+                    break
 
-                    while True:
-                        field_type = input(
-                            "please input the type of field(0-> str; 1-> varstr; 2-> int; 3-> boolean) " + str(
-                                i) + " :")
-                        if int(field_type) in [0, 1, 2, 3]:
-                            break
+            field_length = input("please input the length of field " + str(i) + " :")
+            temp_tuple = (field_name, int(field_type), int(field_length))
+            self.field_name_list.append(temp_tuple)
+            field_name_bytes = field_name.encode('utf-8') if isinstance(field_name, str) else field_name
 
-                    # to need further modification here
-                    field_length = input("please input the length of field " + str(i) + " :")
-                    temp_tuple = (field_name, int(field_type), int(field_length))
-                    self.field_name_list.append(temp_tuple)
-                    if isinstance(field_name, str):
-                        field_name = field_name.encode('utf-8')
+            struct.pack_into('!10sii', self.dir_buf, beginIndex, field_name_bytes, int(field_type),
+                             int(field_length))
+            beginIndex = beginIndex + struct.calcsize('!10sii')
 
-                    struct.pack_into('!10sii', self.dir_buf, beginIndex, field_name, int(field_type),
-                                     int(field_length))
-                    beginIndex = beginIndex + struct.calcsize('!10sii')
+        self.f_handle.seek(0)
+        self.f_handle.write(self.dir_buf)
+        self.f_handle.flush()
 
-                self.f_handle.seek(0)
-                self.f_handle.write(self.dir_buf)
-                self.f_handle.flush()
+    def _load_existing_table(self):
+        """Load field and record data from an existing table file."""
+        self.block_id, self.data_block_num, self.num_of_fields = struct.unpack_from('!iii', self.dir_buf, 0)
 
-        else:  # there is something in the file
+        print('number of fields is ', self.num_of_fields)
+        print('data_block_num', self.data_block_num)
+        beginIndex = struct.calcsize('!iii')
 
-            self.block_id, self.data_block_num, self.num_of_fields = struct.unpack_from('!iii', self.dir_buf, 0)
+        for i in range(self.num_of_fields):
+            field_name, field_type, field_length = struct.unpack_from('!10sii', self.dir_buf,
+                                                                      beginIndex + i * struct.calcsize('!10sii'))
+            field_name_str = field_name.strip().decode('utf-8')
+            temp_tuple = (field_name_str, field_type, field_length)
+            self.field_name_list.append(temp_tuple)
+            print(f"the {i}th field information (field name,field type,field length) is {temp_tuple}")
 
-            print('number of fields is ', self.num_of_fields)
-            print('data_block_num', self.data_block_num)
-            beginIndex = struct.calcsize('!iii')
-
-            # the followins is to read field name, field type and field length into main memory structures
-            for i in range(self.num_of_fields):
-                field_name, field_type, field_length = struct.unpack_from('!10sii', self.dir_buf,
-                                                                          beginIndex + i * struct.calcsize(
-                                                                              '!10sii'))  # i means no memory alignment
-
-                temp_tuple = (field_name, field_type, field_length)
-                self.field_name_list.append(temp_tuple)
-                print("the " + str(i) + "th field information (field name,field type,field length) is ", temp_tuple)
-        # print self.field_name_list
+    def _load_records(self):
+        """Load all records from data blocks into self.record_list."""
         record_head_len = struct.calcsize('!ii10s')
-        record_content_len = sum(map(lambda x: x[2], self.field_name_list))
-        # print record_content_len
+        record_content_len = sum(x[2] for x in self.field_name_list)
 
         Flag = 1
         while Flag <= self.data_block_num:
@@ -178,14 +175,11 @@ class Storage(object):
             self.active_data_buf = self.f_handle.read(BLOCK_SIZE)
             self.block_id, self.Number_of_Records = struct.unpack_from('!ii', self.active_data_buf, 0)
             print('Block_ID=%s,   Contains %s data' % (self.block_id, self.Number_of_Records))
-            # There exists record
             if self.Number_of_Records > 0:
                 for i in range(self.Number_of_Records):
                     self.record_Position.append((Flag, i))
-                    offset = \
-                        struct.unpack_from('!i', self.active_data_buf,
-                                           struct.calcsize('!ii') + i * struct.calcsize('!i'))[
-                            0]
+                    offset = struct.unpack_from('!i', self.active_data_buf,
+                                                struct.calcsize('!ii') + i * struct.calcsize('!i'))[0]
                     record = struct.unpack_from('!' + str(record_content_len) + 's', self.active_data_buf,
                                                 offset + record_head_len)[0]
                     tmp = 0
@@ -195,8 +189,14 @@ class Storage(object):
                         tmp = tmp + field[2]
                         if field[1] == 2:
                             t = int(t)
-                        if field[1] == 3:
-                            t = bool(t)
+                        elif field[1] == 3:
+                            if isinstance(t, bytes):
+                                t = t.strip() == b'1' or t.strip().lower() == b'true'
+                            else:
+                                t = t.strip().lower() in ('1', 'true')
+                        else:
+                            if isinstance(t, bytes):
+                                t = t.decode('utf-8')
                         tmpList.append(t)
                     self.record_list.append(tuple(tmpList))
             Flag += 1
@@ -227,16 +227,17 @@ class Storage(object):
             if self.field_name_list[idx][1] == 0 or self.field_name_list[idx][1] == 1:
                 if len(insert_record[idx]) > self.field_name_list[idx][2]:
                     return False
-                tmpRecord.append(insert_record[idx].encode('utf-8'))
+                tmpRecord.append(insert_record[idx])
             if self.field_name_list[idx][1] == 2:
                 try:
                     tmpRecord.append(int(insert_record[idx]))
-                except:
+                except (ValueError, TypeError):
                     return False
             if self.field_name_list[idx][1] == 3:
                 try:
-                    tmpRecord.append(bool(insert_record[idx]))
-                except:
+                    val = insert_record[idx].strip().lower()
+                    tmpRecord.append(val in ('1', 'true'))
+                except (ValueError, TypeError):
                     return False
             insert_record[idx] = ' ' * (self.field_name_list[idx][2] - len(insert_record[idx])) + insert_record[idx]
 
@@ -336,9 +337,14 @@ class Storage(object):
     # -------------------------------------
 
     def show_table_data(self):
-        print('|    '.join(map(lambda x: x[0].decode('utf-8').strip(), self.field_name_list)))  # show the structure
+        headers = []
+        for x in self.field_name_list:
+            name = x[0]
+            if isinstance(name, bytes):
+                name = name.decode('utf-8')
+            headers.append(name.strip())
+        print('|    '.join(headers))
 
-        # the following is to show the data of the table
         for record in self.record_list:
             print(record)
 
@@ -357,9 +363,9 @@ class Storage(object):
             self.open = False
 
         # step 2: remove the file from os   
-        tableName.strip()
-        if os.path.exists(common_db.data_path(tableName + '.dat'.encode('utf-8'))):
-            os.remove(common_db.data_path(tableName + '.dat'.encode('utf-8')))
+        tableName = tableName.strip()
+        if os.path.exists(common_db.data_path(tableName + '.dat')):
+            os.remove(common_db.data_path(tableName + '.dat'))
 
         return True
 
@@ -371,19 +377,16 @@ class Storage(object):
 
     def getFieldList(self):
         return self.field_name_list
-    
-    def getfilenamelist(self):
-        return self.field_name_list
 
     # ----------------------------------------
     # destructor
     # ------------------------------------------------
     def __del__(self):  # write the metahead information in head object to file
-
-        if self.open == True:
+        if getattr(self, 'open', False) and getattr(self, 'f_handle', None):
             self.f_handle.seek(0)
             self.buf = ctypes.create_string_buffer(struct.calcsize('!ii'))
-            struct.pack_into('!ii', self.buf, 0, 0, self.data_block_num)
+            data_block_num = getattr(self, 'data_block_num', 0)
+            struct.pack_into('!ii', self.buf, 0, 0, data_block_num)
             self.f_handle.write(self.buf)
             self.f_handle.flush()
             self.f_handle.close()
@@ -448,6 +451,30 @@ class Storage(object):
         print('\nCurrent data in the table:')
         self.show_table_data()
 
+    def _find_matching_records(self, field_index, field_value):
+        """Find indices of records matching the given field value."""
+        matching_indices = []
+        for i, record in enumerate(self.record_list):
+            if self.field_name_list[field_index][1] == 2:  # Integer
+                try:
+                    if int(field_value) == record[field_index]:
+                        matching_indices.append(i)
+                except ValueError:
+                    pass
+            elif self.field_name_list[field_index][1] == 3:  # Boolean
+                bool_value = field_value.lower() in ['true', '1']
+                if bool_value == record[field_index]:
+                    matching_indices.append(i)
+            else:  # String
+                record_value = record[field_index]
+                if isinstance(record_value, bytes):
+                    record_value = record_value.strip().decode('utf-8')
+                else:
+                    record_value = str(record_value).strip()
+                if field_value.strip() == record_value:
+                    matching_indices.append(i)
+        return matching_indices
+
     # ------------------------------
     # Delete records directly from the file
     # Parameters:
@@ -460,32 +487,8 @@ class Storage(object):
         if field_index < 0 or field_index >= len(self.field_name_list):
             print(f"Field index {field_index} is out of range")
             return 0
-            
-        # Find indices of records to delete
-        to_delete_indices = []
-        for i, record in enumerate(self.record_list):
-            # Compare based on field type
-            if self.field_name_list[field_index][1] == 2:  # Integer type
-                try:
-                    if int(field_value) == record[field_index]:
-                        to_delete_indices.append(i)
-                except ValueError:
-                    pass
-            elif self.field_name_list[field_index][1] == 3:  # Boolean type
-                bool_value = field_value.lower() in ['true', '1']
-                if bool_value == record[field_index]:
-                    to_delete_indices.append(i)
-            else:  # String type
-                # Get the field value from the record
-                record_value = record[field_index]
-                condition_value = field_value.strip().encode('utf-8')
-                
-                # Compare the processed values
-                if condition_value == record_value:
-                    to_delete_indices.append(i)
-                # If exact match fails, try a more relaxed comparison
-                elif condition_value in record_value or record_value in condition_value:
-                    to_delete_indices.append(i)
+
+        to_delete_indices = self._find_matching_records(field_index, field_value)
         
         if not to_delete_indices:
             # Print debug information
@@ -577,7 +580,10 @@ class Storage(object):
                         elif self.field_name_list[j][1] == 3:  # Boolean
                             field_str = '1' if value else '0'
                         else:  # String
-                            field_str = value.strip().decode('utf-8')
+                            if isinstance(value, bytes):
+                                field_str = value.strip().decode('utf-8')
+                            else:
+                                field_str = str(value).strip()
 
                         # Pad with spaces to specified length
                         field_str = ' ' * (self.field_name_list[j][2] - len(field_str)) + field_str
@@ -646,37 +652,13 @@ class Storage(object):
             elif field_type == 3:  # Boolean
                 update_value = update_field_value.lower() in ['true', '1']
             else:  # String
-                update_value = update_field_value.strip().encode('utf-8')
+                update_value = update_field_value.strip()
         except ValueError:
             print(f"Failed to convert update value to the required type")
             return 0
             
         # Find indices of records to update
-        to_update_indices = []
-        for i, record in enumerate(self.record_list):
-            # Compare based on field type
-            if self.field_name_list[condition_field_index][1] == 2:  # Integer type
-                try:
-                    if int(condition_field_value) == record[condition_field_index]:
-                        to_update_indices.append(i)
-                except ValueError:
-                    pass
-            elif self.field_name_list[condition_field_index][1] == 3:  # Boolean type
-                bool_value = condition_field_value.lower() in ['true', '1']
-                if bool_value == record[condition_field_index]:
-                    to_update_indices.append(i)
-            else:  # String type
-                # Get the field value from the record
-                record_value = record[condition_field_index]
-                record_value = record_value.strip() #(bytes)
-                condition_value = condition_field_value.strip().encode('utf-8') #(bytes)
-                
-                # Compare the processed values
-                if condition_value == record_value:
-                    to_update_indices.append(i)
-                # If exact match fails, try a more relaxed comparison
-                elif condition_value in record_value or record_value in condition_value:
-                    to_update_indices.append(i)
+        to_update_indices = self._find_matching_records(condition_field_index, condition_field_value)
         
         if not to_update_indices:
             # Print debug information
@@ -738,7 +720,10 @@ class Storage(object):
                 elif self.field_name_list[j][1] == 3:  # Boolean
                     field_str = '1' if value else '0'
                 else:  # String
-                    field_str = value.strip().decode('utf-8')
+                    if isinstance(value, bytes):
+                        field_str = value.strip().decode('utf-8')
+                    else:
+                        field_str = str(value).strip()
                 
                 # Pad with spaces to specified length
                 field_str = ' ' * (self.field_name_list[j][2] - len(field_str)) + field_str
