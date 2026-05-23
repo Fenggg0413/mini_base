@@ -10,6 +10,7 @@ from . import index_db
 from . import index_catalog
 from . import lex_db
 from . import parser_db
+from . import transaction_db
 
 
 class SqlExecutionError(Exception):
@@ -339,6 +340,22 @@ def execute_sql(sql_str):
         return execute_create_table(ast)
     elif stmt_type == 'drop_table':
         return execute_drop_table(ast)
+    elif stmt_type == 'begin_transaction':
+        return execute_begin_transaction()
+    elif stmt_type == 'commit':
+        return execute_commit()
+    elif stmt_type == 'rollback':
+        return execute_rollback()
+    elif stmt_type == 'create_index':
+        return execute_create_index(ast)
+    elif stmt_type == 'drop_index':
+        return execute_drop_index(ast)
+    elif stmt_type == 'show_tables':
+        return execute_show_tables()
+    elif stmt_type == 'show_indexes':
+        return execute_show_indexes(ast)
+    elif stmt_type == 'describe':
+        return execute_describe(ast)
     else:
         raise SqlExecutionError("Unknown SQL statement type: '%s'" % stmt_type)
 
@@ -787,3 +804,156 @@ def execute_drop_table(ast):
 
     print("Table '%s' dropped." % table_name)
     return True
+
+
+def execute_begin_transaction():
+    if common_db.current_transaction_id is not None:
+        raise SqlExecutionError(
+            "Transaction %s is already active. COMMIT or ROLLBACK before starting a new one."
+            % common_db.current_transaction_id
+        )
+    txn_manager = transaction_db.get_transaction_manager()
+    txn_id = txn_manager.begin_transaction()
+    common_db.current_transaction_id = txn_id
+    print("BEGIN TRANSACTION %d" % txn_id)
+    return txn_id
+
+
+def execute_commit():
+    if common_db.current_transaction_id is None:
+        raise SqlExecutionError("No active transaction to COMMIT")
+    txn_manager = transaction_db.get_transaction_manager()
+    txn_manager.commit_transaction(common_db.current_transaction_id)
+    print("COMMIT TRANSACTION %d" % common_db.current_transaction_id)
+    txn_id = common_db.current_transaction_id
+    common_db.current_transaction_id = None
+    return txn_id
+
+
+def execute_rollback():
+    if common_db.current_transaction_id is None:
+        raise SqlExecutionError("No active transaction to ROLLBACK")
+    txn_manager = transaction_db.get_transaction_manager()
+    txn_manager.abort_transaction(common_db.current_transaction_id)
+    print("ROLLBACK TRANSACTION %d" % common_db.current_transaction_id)
+    txn_id = common_db.current_transaction_id
+    common_db.current_transaction_id = None
+    return txn_id
+
+
+def execute_create_index(ast):
+    from . import schema_db
+
+    table_name = ast['table'].strip()
+    field_name = ast['field'].strip()
+
+    schema_obj = schema_db.Schema()
+    if not schema_obj.find_table(table_name):
+        del schema_obj
+        raise SqlExecutionError("Table '%s' does not exist" % table_name)
+
+    field_list = schema_obj.viewTableStructure(table_name)
+    if field_list is None:
+        del schema_obj
+        raise SqlExecutionError("Failed to get table structure for '%s'" % table_name)
+
+    found = False
+    for fn in field_list:
+        fn_str = fn[0].strip() if isinstance(fn[0], str) else fn[0].strip().decode('utf-8')
+        if fn_str == field_name:
+            found = True
+            break
+    if not found:
+        del schema_obj
+        raise SqlExecutionError("Field '%s' does not exist in table '%s'" % (field_name, table_name))
+
+    indexed = index_catalog.get_indexed_fields(table_name)
+    if field_name in indexed:
+        del schema_obj
+        raise SqlExecutionError("Index on '%s.%s' already exists" % (table_name, field_name))
+
+    idx = index_db.Index(table_name)
+    ok = idx.create_index(field_name)
+    idx.close()
+    if ok:
+        index_catalog.add_index(table_name, field_name)
+        print("CREATE INDEX %s.%s OK" % (table_name, field_name))
+    else:
+        raise SqlExecutionError("Failed to create index on '%s.%s'" % (table_name, field_name))
+
+    del schema_obj
+    return ok
+
+
+def execute_drop_index(ast):
+    table_name = ast['table'].strip()
+    field_name = ast['field'].strip()
+
+    if not index_catalog.remove_index(table_name, field_name):
+        raise SqlExecutionError("No index found on '%s.%s'" % (table_name, field_name))
+    print("DROP INDEX %s.%s OK" % (table_name, field_name))
+    return True
+
+
+def execute_show_tables():
+    from . import schema_db
+
+    schema_obj = schema_db.Schema()
+    tables = schema_obj.get_table_name_list()
+    if not tables:
+        print("No tables found.")
+    else:
+        print("Tables:")
+        for t in tables:
+            print("  %s" % t)
+    del schema_obj
+    return tables
+
+
+def execute_show_indexes(ast):
+    table_name = ast.get('table')
+    if table_name is not None:
+        table_name = table_name.strip()
+        indexes = index_catalog.list_all_indexes()
+        filtered = [(t, f) for t, f in indexes if t == table_name]
+        if not filtered:
+            print("No indexes found for table '%s'." % table_name)
+        else:
+            print("Indexes on %s:" % table_name)
+            for t, f in filtered:
+                print("  %s.%s" % (t, f))
+        return filtered
+    else:
+        indexes = index_catalog.list_all_indexes()
+        if not indexes:
+            print("No indexes found.")
+        else:
+            print("Indexes:")
+            for t, f in indexes:
+                print("  %s.%s" % (t, f))
+        return indexes
+
+
+def execute_describe(ast):
+    from . import schema_db
+
+    table_name = ast['table'].strip()
+    schema_obj = schema_db.Schema()
+    if not schema_obj.find_table(table_name):
+        del schema_obj
+        raise SqlExecutionError("Table '%s' does not exist" % table_name)
+
+    field_list = schema_obj.viewTableStructure(table_name)
+    if field_list is None:
+        del schema_obj
+        raise SqlExecutionError("Failed to get structure for '%s'" % table_name)
+
+    print("{:<15} {:<15} {:<10}".format("Field", "Type", "Length"))
+    print("-" * 40)
+    for fname, ftype, flen in field_list:
+        fn = fname.strip() if isinstance(fname, str) else fname.strip().decode('utf-8')
+        type_str = {0: "String", 1: "VarString", 2: "Integer", 3: "Boolean"}.get(ftype, "Unknown")
+        print("{:<15} {:<15} {:<10}".format(fn, type_str, flen))
+
+    del schema_obj
+    return field_list

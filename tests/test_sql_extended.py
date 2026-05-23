@@ -231,7 +231,7 @@ class TestTransactionExecution:
 
 class TestIndexExecution:
     def test_create_index(self, tmp_data):
-        query_plan_db.execute_sql("CREATE TABLE foo (name str 10, age int)")
+        query_plan_db.execute_sql("CREATE TABLE foo (name str(10), age int)")
         result = query_plan_db.execute_sql("CREATE INDEX ON foo(age)")
         assert result is not False
 
@@ -240,18 +240,18 @@ class TestIndexExecution:
             query_plan_db.execute_sql("CREATE INDEX ON NoSuchTable(field)")
 
     def test_create_index_nonexistent_field(self, tmp_data):
-        query_plan_db.execute_sql("CREATE TABLE bar (name str 10)")
+        query_plan_db.execute_sql("CREATE TABLE bar (name str(10))")
         with pytest.raises(query_plan_db.SqlExecutionError, match="does not exist"):
             query_plan_db.execute_sql("CREATE INDEX ON bar(nonexistent)")
 
     def test_create_index_duplicate(self, tmp_data):
-        query_plan_db.execute_sql("CREATE TABLE baz (name str 10, id int)")
+        query_plan_db.execute_sql("CREATE TABLE baz (name str(10), id int)")
         query_plan_db.execute_sql("CREATE INDEX ON baz(id)")
         with pytest.raises(query_plan_db.SqlExecutionError, match="already exists"):
             query_plan_db.execute_sql("CREATE INDEX ON baz(id)")
 
     def test_drop_index(self, tmp_data):
-        query_plan_db.execute_sql("CREATE TABLE qux (name str 10, id int)")
+        query_plan_db.execute_sql("CREATE TABLE qux (name str(10), id int)")
         query_plan_db.execute_sql("CREATE INDEX ON qux(id)")
         result = query_plan_db.execute_sql("DROP INDEX ON qux(id)")
         assert result is True
@@ -279,13 +279,13 @@ class TestMetadataExecution:
         assert isinstance(result, list)
 
     def test_show_index_from_table(self, tmp_data):
-        query_plan_db.execute_sql("CREATE TABLE tbl (a str 10, b int)")
+        query_plan_db.execute_sql("CREATE TABLE tbl (a str(10), b int)")
         query_plan_db.execute_sql("CREATE INDEX ON tbl(b)")
         result = query_plan_db.execute_sql("SHOW INDEX FROM tbl")
         assert any('b' in str(r) for r in result)
 
     def test_describe(self, tmp_data):
-        query_plan_db.execute_sql("CREATE TABLE mytable (name str 10, age int)")
+        query_plan_db.execute_sql("CREATE TABLE mytable (name str(10), age int)")
         result = query_plan_db.execute_sql("DESCRIBE mytable")
         assert result is not None
         assert len(result) == 2
@@ -348,7 +348,7 @@ class TestREPL:
 
 class TestEndToEndSQL:
     def test_full_crud_workflow(self, tmp_data):
-        query_plan_db.execute_sql("CREATE TABLE employee (name str 10, dept str 10, salary int)")
+        query_plan_db.execute_sql("CREATE TABLE employee (name str(10), dept str(10), salary int)")
         query_plan_db.execute_sql("INSERT INTO employee VALUES ('Alice', 'Eng', 5000)")
         query_plan_db.execute_sql("INSERT INTO employee VALUES ('Bob', 'Sales', 4500)")
         query_plan_db.execute_sql("INSERT INTO employee VALUES ('Carol', 'Eng', 5500)")
@@ -383,7 +383,7 @@ class TestEndToEndSQL:
 
     def test_show_tables_after_multiple_creates(self, tmp_data):
         query_plan_db.execute_sql("CREATE TABLE t1 (a int)")
-        query_plan_db.execute_sql("CREATE TABLE t2 (b str 5)")
+        query_plan_db.execute_sql("CREATE TABLE t2 (b str(5))")
         result = query_plan_db.execute_sql("SHOW TABLES")
         assert 't1' in result
         assert 't2' in result
