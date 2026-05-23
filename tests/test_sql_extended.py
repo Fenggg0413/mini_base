@@ -341,7 +341,7 @@ class TestREPL:
             with patch('sys.stdout', new_callable=io.StringIO) as fake_out:
                 main_db.main()
                 output = fake_out.getvalue()
-                assert 'Error' not in output or 'Error' not in output.split('\n')[-2]
+                assert 'Error' not in output
 
 
 # ─────── Cycle 9: End-to-End Integration Tests ───────

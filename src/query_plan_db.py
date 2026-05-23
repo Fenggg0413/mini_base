@@ -873,12 +873,15 @@ def execute_create_index(ast):
         raise SqlExecutionError("Index on '%s.%s' already exists" % (table_name, field_name))
 
     idx = index_db.Index(table_name)
-    ok = idx.create_index(field_name)
-    idx.close()
+    try:
+        ok = idx.create_index(field_name)
+    finally:
+        idx.close()
     if ok:
         index_catalog.add_index(table_name, field_name)
         print("CREATE INDEX %s.%s OK" % (table_name, field_name))
     else:
+        del schema_obj
         raise SqlExecutionError("Failed to create index on '%s.%s'" % (table_name, field_name))
 
     del schema_obj
