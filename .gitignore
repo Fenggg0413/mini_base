@@ -15,10 +15,11 @@ lextab.py
 # IDE
 .idea/
 .vscode/
+.opencode/
+AGENTS.md
 
 # Tutorial
 tutorial/
 
-# Runtime artifacts (logs and indexes; .dat/.sch contain seed data)
-data/*.log
-data/*.ind
+# Runtime data directory (schema, tables, logs, indexes)
+data/

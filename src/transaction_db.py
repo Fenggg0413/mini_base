@@ -17,9 +17,11 @@ TRANSACTION_ACTIVE = 0
 TRANSACTION_COMMITTED = 1
 TRANSACTION_ABORTED = 2
 
-# 操作类型常量
 OPERATION_INSERT = 0
 OPERATION_UPDATE = 1
+
+LOG_RECORD_STATUS = 0x00
+LOG_RECORD_IMAGE = 0x01
 
 
 #--------------------------------
@@ -161,17 +163,15 @@ class TransactionManager:
     #   无
     #----------------------------------
     def _log_transaction_status(self, txn_id, status):
-        # 简单日志格式：事务ID, 状态, 时间戳
         timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         log_entry = f"TXN_STATUS,{txn_id},{status},{timestamp}\n"
         
-        # 写入两个日志文件
-        self.before_image_file.seek(0, 2)  # 移动到文件末尾
-        self.before_image_file.write(log_entry.encode('utf-8'))
-        self.before_image_size = self.before_image_file.tell()
+        for log_file in (self.before_image_file, self.after_image_file):
+            log_file.seek(0, 2)
+            log_file.write(struct.pack('!B', LOG_RECORD_STATUS))
+            log_file.write(log_entry.encode('utf-8'))
         
-        self.after_image_file.seek(0, 2)  # 移动到文件末尾
-        self.after_image_file.write(log_entry.encode('utf-8'))
+        self.before_image_size = self.before_image_file.tell()
         self.after_image_size = self.after_image_file.tell()
 
 
@@ -226,6 +226,7 @@ class TransactionManager:
                                 location_bytes)
 
         log_file.seek(0, 2)
+        log_file.write(struct.pack('!B', LOG_RECORD_IMAGE))
         log_file.write(log_header)
         log_file.write(record_data)
 
@@ -253,268 +254,153 @@ class TransactionManager:
     # 返回：
     #   无
     #----------------------------------
+    def _read_log_entry(self, log_file):
+        """Read a single log entry from the current file position.
+        
+        Returns a tuple (entry_type, entry_data) where:
+          entry_type is LOG_RECORD_STATUS or LOG_RECORD_IMAGE
+          entry_data is a dict with parsed fields
+        Returns None if end of file or unrecoverable error.
+        """
+        pos = log_file.tell()
+        magic_byte = log_file.read(1)
+        if not magic_byte:
+            return None
+        
+        record_type = struct.unpack('!B', magic_byte)[0]
+        
+        if record_type == LOG_RECORD_STATUS:
+            line = b''
+            while True:
+                ch = log_file.read(1)
+                if not ch or ch == b'\n':
+                    break
+                line += ch
+            try:
+                line_str = line.decode('utf-8')
+                parts = line_str.split(',')
+                if len(parts) >= 3:
+                    txn_id = int(parts[1])
+                    status = int(parts[2])
+                    return (LOG_RECORD_STATUS, {'txn_id': txn_id, 'status': status})
+            except Exception as e:
+                print(f"解析事务状态记录时出错: {str(e)}")
+            return None
+        
+        elif record_type == LOG_RECORD_IMAGE:
+            header_size = struct.calcsize('!IQI20s50s')
+            log_header = log_file.read(header_size)
+            if len(log_header) < header_size:
+                return None
+            try:
+                txn_id, timestamp, record_len, table_name_bytes, location_bytes = struct.unpack('!IQI20s50s', log_header)
+                record_data = log_file.read(record_len)
+                if len(record_data) < record_len:
+                    return None
+                table_name = table_name_bytes.split(b'\x00')[0].decode('utf-8')
+                location = location_bytes.split(b'\x00')[0].decode('utf-8')
+                return (LOG_RECORD_IMAGE, {
+                    'txn_id': txn_id,
+                    'timestamp': timestamp,
+                    'record_len': record_len,
+                    'table_name': table_name,
+                    'location': location,
+                    'record_data': record_data,
+                })
+            except struct.error as e:
+                print(f"解析二进制日志记录时出错: {str(e)}")
+                return None
+        else:
+            return None
+
     def _recover_transactions(self):
         print("开始事务恢复过程...")
         
-        # 检查日志文件大小
         if self.before_image_size == 0 and self.after_image_size == 0:
             print("没有找到需要恢复的日志")
             return
-            
-        # 第一步：分析阶段 - 确定提交的和未提交的事务
-        committed_txns = set()  # 已提交事务的集合
-        active_txns = set()     # 活动（未提交）事务的集合
         
-        # 从日志中提取事务状态信息 - 改进方式处理混合格式的日志
+        committed_txns = set()
+        active_txns = set()
+        
         self.after_image_file.seek(0)
-        
-        # 逐字节扫描日志文件，寻找文本记录
-        offset = 0
-        while offset < self.after_image_size:
-            try:
-                self.after_image_file.seek(offset)
-                # 读取足够大的块来检查是否为TXN_STATUS记录
-                chunk = self.after_image_file.read(10)
-                
-                # 检查是否为文本记录
-                if chunk.startswith(b'TXN_STATUS'):
-                    # 读取整行
-                    self.after_image_file.seek(offset)
-                    line = b''
-                    while True:
-                        char = self.after_image_file.read(1)
-                        if not char or char == b'\n':
-                            break
-                        line += char
-                    
-                    # 解析事务状态记录
-                    try:
-                        line_str = line.decode('utf-8')
-                        parts = line_str.split(',')
-                        if len(parts) >= 3:
-                            txn_id = int(parts[1])
-                            status = int(parts[2])
-                            
-                            if status == TRANSACTION_COMMITTED:
-                                committed_txns.add(txn_id)
-                                if txn_id in active_txns:
-                                    active_txns.remove(txn_id)
-                            elif status == TRANSACTION_ACTIVE:
-                                if txn_id not in committed_txns:
-                                    active_txns.add(txn_id)
-                    except Exception as e:
-                        print(f"解析事务状态记录时出错: {str(e)}")
-                    
-                    # 移动到下一行
-                    offset += len(line) + 1  # +1 for newline
-                else:
-                    # 可能是二进制记录，尝试按二进制格式解析
-                    try:
-                        # 跳过二进制记录
-                        # 尝试读取日志头部结构
-                        self.after_image_file.seek(offset)
-                        log_header = self.after_image_file.read(struct.calcsize('!IQI20s50s'))
-                        
-                        if len(log_header) == struct.calcsize('!IQI20s50s'):
-                            try:
-                                txn_id, timestamp, record_len, table_name_bytes, location_bytes = struct.unpack('!IQI20s50s', log_header)
-                                # 移动到下一个记录
-                                offset += struct.calcsize('!IQI20s50s') + record_len
-                            except struct.error:
-                                # 如果解析失败，移动到下一个字节
-                                offset += 1
-                        else:
-                            # 读取不完整，移动到下一个字节
-                            offset += 1
-                    except Exception:
-                        # 任何错误，移动到下一个字节
-                        offset += 1
-            except Exception as e:
-                print(f"分析日志时出错: {str(e)}")
-                offset += 1
+        while True:
+            entry = self._read_log_entry(self.after_image_file)
+            if entry is None:
+                break
+            entry_type, entry_data = entry
+            if entry_type == LOG_RECORD_STATUS:
+                txn_id = entry_data['txn_id']
+                status = entry_data['status']
+                if status == TRANSACTION_COMMITTED:
+                    committed_txns.add(txn_id)
+                    if txn_id in active_txns:
+                        active_txns.remove(txn_id)
+                elif status == TRANSACTION_ACTIVE:
+                    if txn_id not in committed_txns:
+                        active_txns.add(txn_id)
         
         print(f"分析阶段完成: 找到 {len(committed_txns)} 个已提交事务, {len(active_txns)} 个未完成事务")
         
-        # 第二步：重做阶段 - 重做所有已提交事务的操作
+        for txn_id in committed_txns:
+            self.committed_transactions[txn_id] = 'recovered'
+        
         if committed_txns:
             print("开始重做阶段...")
-            # 处理后像日志中的已提交事务
             self._redo_committed_transactions(committed_txns)
-            
-        # 第三步：撤销阶段 - 撤销所有未提交事务的操作
+        
         if active_txns:
             print("开始撤销阶段...")
-            # 处理前像日志中的未提交事务
             self._undo_uncommitted_transactions(active_txns)
-            
+        
         print("恢复过程完成")
 
-
-    #----------------------------------
-    # 重做已提交事务的操作
-    # 功能：
-    #   根据后像日志，重做所有已提交事务的操作
-    # 处理流程：
-    #   1. 扫描后像日志文件
-    #   2. 对于已提交事务的每个操作，将其应用到数据文件
-    # 参数：
-    #   committed_txns: 已提交事务ID的集合
-    # 返回：
-    #   无
-    #----------------------------------
     def _redo_committed_transactions(self, committed_txns):
-        # 重置文件指针到开始位置
         self.after_image_file.seek(0)
-        
-        # 遍历整个后像日志文件
-        offset = 0
-        while offset < self.after_image_size:
-            try:
-                # 尝试读取日志头部
-                self.after_image_file.seek(offset)
-                log_header = self.after_image_file.read(struct.calcsize('!IQI20s50s'))
-                
-                # 如果是文本格式的日志条目（事务状态记录），跳过这一行
-                if log_header.startswith(b'TXN_STATUS'):
-                    # 跳过这一行
-                    line_end = log_header.find(b'\n')
-                    if line_end != -1:
-                        offset += (line_end + 1)
-                    else:
-                        # 如果没有找到换行符，移动到下一个字节
-                        offset += 1
-                    continue
-                
-                # 解析日志头部
-                try:
-                    txn_id, timestamp, record_len, table_name_bytes, location_bytes = struct.unpack('!IQI20s50s', log_header)
-                    
-                    # 如果事务已提交，则重做操作
-                    if txn_id in committed_txns:
-                        # 读取记录数据
-                        record_data = self.after_image_file.read(record_len)
-                        
-                        # 解析表名和位置信息
-                        table_name = table_name_bytes.split(b'\x00')[0].decode('utf-8')
-                        location = location_bytes.split(b'\x00')[0].decode('utf-8')
-                        
-                        try:
-                            block_id, record_offset = map(int, location.split(':'))
-                            
-                            # 重写数据到数据文件
-                            self._write_record_to_file(table_name, record_data, block_id, int(record_offset))
-                            print(f"重做: 事务 {txn_id} 写入表 {table_name}, 位置 {location}")
-                        except Exception as e:
-                            print(f"重做记录时出错: {str(e)}")
-                    
-                    # 移动到下一个日志条目
-                    offset += struct.calcsize('!IQI20s50s') + record_len
-                    
-                except struct.error:
-                    # 如果解析失败，移动到下一个字节
-                    offset += 1
-                    
-            except Exception as e:
-                print(f"处理后像日志时出错: {str(e)}")
-                offset += 1
+        while True:
+            entry = self._read_log_entry(self.after_image_file)
+            if entry is None:
+                break
+            entry_type, entry_data = entry
+            if entry_type == LOG_RECORD_IMAGE:
+                if entry_data['txn_id'] in committed_txns:
+                    try:
+                        block_id, record_offset = map(int, entry_data['location'].split(':'))
+                        self._write_record_to_file(
+                            entry_data['table_name'],
+                            entry_data['record_data'],
+                            block_id,
+                            int(record_offset)
+                        )
+                        print(f"重做: 事务 {entry_data['txn_id']} 写入表 {entry_data['table_name']}, 位置 {entry_data['location']}")
+                    except Exception as e:
+                        print(f"重做记录时出错: {str(e)}")
 
-
-    #----------------------------------
-    # 撤销未提交事务的操作
-    # 功能：
-    #   根据前像日志，撤销所有未提交事务的操作
-    # 处理流程：
-    #   1. 扫描前像日志文件
-    #   2. 收集所有未提交事务的操作
-    #   3. 按时间戳倒序排序操作（最近的先撤销）
-    #   4. 对每个位置只处理最早的一个前像
-    # 参数：
-    #   active_txns: 未提交事务ID的集合
-    # 返回：
-    #   无
-    #----------------------------------
     def _undo_uncommitted_transactions(self, active_txns):
-        # 要按时间戳倒序处理前像日志（先处理最近的操作）
-        # 创建一个列表来存储所有需要撤销的日志条目
         undo_entries = []
         
-        # 重置文件指针到开始位置
         self.before_image_file.seek(0)
+        while True:
+            entry = self._read_log_entry(self.before_image_file)
+            if entry is None:
+                break
+            entry_type, entry_data = entry
+            if entry_type == LOG_RECORD_IMAGE:
+                if entry_data['txn_id'] in active_txns:
+                    undo_entries.append(entry_data)
         
-        # 遍历整个前像日志文件
-        offset = 0
-        while offset < self.before_image_size:
-            try:
-                # 尝试读取日志头部
-                self.before_image_file.seek(offset)
-                log_header = self.before_image_file.read(struct.calcsize('!IQI20s50s'))
-                
-                # 如果是文本格式的日志条目（事务状态记录），跳过这一行
-                if log_header.startswith(b'TXN_STATUS'):
-                    # 跳过这一行
-                    line_end = log_header.find(b'\n')
-                    if line_end != -1:
-                        offset += (line_end + 1)
-                    else:
-                        # 如果没有找到换行符，移动到下一个字节
-                        offset += 1
-                    continue
-                
-                # 解析日志头部
-                try:
-                    txn_id, timestamp, record_len, table_name_bytes, location_bytes = struct.unpack('!IQI20s50s', log_header)
-                    
-                    # 如果事务未提交，则收集前像信息
-                    if txn_id in active_txns:
-                        # 读取记录数据
-                        record_data = self.before_image_file.read(record_len)
-                        # 确保record_data是字节类型
-                        if isinstance(record_data, str):
-                            record_data = record_data.encode('utf-8')
-                        
-                        # 解析表名和位置信息
-                        table_name = table_name_bytes.split(b'\x00')[0].decode('utf-8')
-                        location = location_bytes.split(b'\x00')[0].decode('utf-8')
-                        
-                        # 添加到撤销条目列表
-                        undo_entries.append({
-                            'txn_id': txn_id,
-                            'timestamp': timestamp,
-                            'table_name': table_name,
-                            'location': location,
-                            'record_data': record_data
-                        })
-                    
-                    # 移动到下一个日志条目
-                    offset += struct.calcsize('!IQI20s50s') + record_len
-                    
-                except struct.error:
-                    # 如果解析失败，移动到下一个字节
-                    offset += 1
-                    
-            except Exception as e:
-                print(f"处理前像日志时出错: {str(e)}")
-                offset += 1
-        
-        # 按时间戳倒序排序
         undo_entries.sort(key=lambda x: x['timestamp'], reverse=True)
         
-        # 对每个位置只处理最早的一个前像（避免重复撤销）
         processed_locations = set()
         
-        # 执行撤销操作
         for entry in undo_entries:
             location_key = f"{entry['table_name']}:{entry['location']}"
             
             if location_key not in processed_locations:
                 try:
                     block_id, record_offset = map(int, entry['location'].split(':'))
-                    
-                    # 写回原始数据
                     self._write_record_to_file(entry['table_name'], entry['record_data'], block_id, int(record_offset))
                     print(f"撤销: 事务 {entry['txn_id']} 恢复表 {entry['table_name']}, 位置 {entry['location']}")
-                    
-                    # 标记该位置已处理
                     processed_locations.add(location_key)
                 except Exception as e:
                     print(f"撤销记录时出错: {str(e)}")
