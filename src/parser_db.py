@@ -46,6 +46,98 @@ def p_statement_select(t):
     t[0] = t[1]
 
 
+# --- BEGIN / COMMIT / ROLLBACK ---
+
+def p_statement_begin(t):
+    'Statement : BeginStmt'
+    t[0] = t[1]
+
+def p_statement_commit(t):
+    'Statement : CommitStmt'
+    t[0] = t[1]
+
+def p_statement_rollback(t):
+    'Statement : RollbackStmt'
+    t[0] = t[1]
+
+# --- CREATE INDEX / DROP INDEX ---
+
+def p_statement_create_index(t):
+    'Statement : CreateIndexStmt'
+    t[0] = t[1]
+
+def p_statement_drop_index(t):
+    'Statement : DropIndexStmt'
+    t[0] = t[1]
+
+# --- SHOW / DESCRIBE ---
+
+def p_statement_show_tables(t):
+    'Statement : ShowTablesStmt'
+    t[0] = t[1]
+
+def p_statement_show_index(t):
+    'Statement : ShowIndexStmt'
+    t[0] = t[1]
+
+def p_statement_describe(t):
+    'Statement : DescribeStmt'
+    t[0] = t[1]
+
+
+# --- BEGIN / COMMIT / ROLLBACK ---
+
+def p_begin_stmt(t):
+    'BeginStmt : BEGIN OptSemi'
+    t[0] = {'type': 'begin_transaction'}
+
+def p_begin_transaction_stmt(t):
+    'BeginStmt : BEGIN TRANSACTION OptSemi'
+    t[0] = {'type': 'begin_transaction'}
+
+def p_commit_stmt(t):
+    'CommitStmt : COMMIT OptSemi'
+    t[0] = {'type': 'commit'}
+
+def p_rollback_stmt(t):
+    'RollbackStmt : ROLLBACK OptSemi'
+    t[0] = {'type': 'rollback'}
+
+# --- CREATE INDEX ---
+
+def p_create_index_stmt(t):
+    'CreateIndexStmt : CREATE INDEX ON IDENT LPAREN IDENT RPAREN OptSemi'
+    t[0] = {'type': 'create_index', 'table': t[4], 'field': t[6]}
+
+# --- DROP INDEX ---
+
+def p_drop_index_stmt(t):
+    'DropIndexStmt : DROP INDEX ON IDENT LPAREN IDENT RPAREN OptSemi'
+    t[0] = {'type': 'drop_index', 'table': t[4], 'field': t[6]}
+
+# --- SHOW TABLES ---
+
+def p_show_tables_stmt(t):
+    'ShowTablesStmt : SHOW TABLES OptSemi'
+    t[0] = {'type': 'show_tables'}
+
+# --- SHOW INDEX ---
+
+def p_show_index_stmt_all(t):
+    'ShowIndexStmt : SHOW INDEX OptSemi'
+    t[0] = {'type': 'show_indexes', 'table': None}
+
+def p_show_index_stmt_from(t):
+    'ShowIndexStmt : SHOW INDEX FROM IDENT OptSemi'
+    t[0] = {'type': 'show_indexes', 'table': t[4]}
+
+# --- DESCRIBE ---
+
+def p_describe_stmt(t):
+    'DescribeStmt : DESCRIBE IDENT OptSemi'
+    t[0] = {'type': 'describe', 'table': t[2]}
+
+
 # --- INSERT ---
 
 def p_insert_with_columns(t):
