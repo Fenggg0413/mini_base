@@ -849,7 +849,10 @@ def execute_create_index(ast):
 
     found = False
     for fn in field_list:
-        fn_str = fn[0].strip() if isinstance(fn[0], str) else fn[0].strip().decode('utf-8')
+        if isinstance(fn[0], bytes):
+            fn_str = fn[0].rstrip(b'\x00').strip().decode('utf-8')
+        else:
+            fn_str = fn[0].strip()
         if fn_str == field_name:
             found = True
             break
@@ -937,10 +940,13 @@ def execute_describe(ast):
     if field_list is None:
         raise SqlExecutionError("Failed to get structure for '%s'" % table_name)
 
-    print("{:<15} {:<15} {:<10}".format("Field", "Type", "Length"))
-    print("-" * 40)
+    print("{:<12} {:<10} {:>6}".format("Field", "Type", "Length"))
+    print("{} {} {}".format("-" * 12, "-" * 10, "-" * 6))
     for fname, ftype, flen in field_list:
-        fn = fname.strip() if isinstance(fname, str) else fname.strip().decode('utf-8')
+        if isinstance(fname, bytes):
+            fn = fname.rstrip(b'\x00').strip().decode('utf-8')
+        else:
+            fn = fname.strip()
         type_str = {0: "String", 1: "VarString", 2: "Integer", 3: "Boolean"}.get(ftype, "Unknown")
-        print("{:<15} {:<15} {:<10}".format(fn, type_str, flen))
+        print("{:<12} {:<10} {:>6}".format(fn, type_str, flen))
     return field_list

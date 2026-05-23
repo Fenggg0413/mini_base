@@ -233,7 +233,7 @@ class Schema(object):
                     if common_db.VERBOSE:
                         print ("tempPos in body is ", tempPos)
 
-                    tempNameMix = (tempName.strip().decode('utf-8'), tempNum, tempPos)
+                    tempNameMix = (tempName.rstrip(b'\x00').strip().decode('utf-8'), tempNum, tempPos)
                     nameList.append(tempNameMix)  # It is a triple
 
                     # the following is to fetch field information from body section and each field is  (fieldname,fieldtype,fieldlength)
@@ -244,12 +244,12 @@ class Schema(object):
                                                                                              buf, tempPos + j * MAX_FIELD_LEN)
 
                             # Handle empty field names
-                            if not tempFieldName.strip():
+                            if not tempFieldName.rstrip(b'\x00').strip():
                                 tempFieldName = f"field_{j+1}"
                                 if common_db.VERBOSE:
                                     print ('field name is empty, using default name:', tempFieldName)
                             else:
-                                tempFieldName = tempFieldName.strip().decode('utf-8')
+                                tempFieldName = tempFieldName.rstrip(b'\x00').strip().decode('utf-8')
                                 if common_db.VERBOSE:
                                     print ('field name is', tempFieldName)
 
@@ -264,7 +264,7 @@ class Schema(object):
                             fields.append(tempFieldTuple)
 
 
-                        fieldsList[tempName.strip().decode('utf-8')]=fields
+                        fieldsList[tempName.rstrip(b'\x00').strip().decode('utf-8')]=fields
 
                 # the main memory structure for schema is constructed
 
