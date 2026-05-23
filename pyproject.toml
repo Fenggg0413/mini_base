@@ -11,3 +11,6 @@ dependencies = [
 dev = [
     "pytest>=7.0",
 ]
+
+[project.scripts]
+mini-base = "src.main_db:main"

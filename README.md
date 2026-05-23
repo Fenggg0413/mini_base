@@ -57,11 +57,14 @@ mini_base/
 pip install ply
 ```
 
-从项目根目录以模块方式启动 SQL REPL：
+从项目根目录安装后直接启动：
 
 ```bash
-python -m src.main_db
+pip install -e .
+mini-base
 ```
+
+也可用模块方式启动：`python -m src.main_db`
 
 启动后进入 `mini_base>` 提示符，直接输入 SQL 语句或 dot-commands。
 
