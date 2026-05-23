@@ -103,10 +103,15 @@ class TestSharedSchema:
         assert 't1' in tables
         assert 't2' in tables
 
-    def test_shared_schema_unset_raises(self, clean_data_dir, monkeypatch):
-        monkeypatch.setattr(common_db, 'shared_schema', None)
-        with pytest.raises(query_plan_db.SqlExecutionError, match="Schema not initialized"):
-            query_plan_db.execute_sql("SHOW TABLES")
+    def test_shared_schema_persistence(self, clean_data_dir, monkeypatch):
+        """When shared_schema is set, tables persist across SQL statements."""
+        monkeypatch.setattr(common_db, 'shared_schema', schema_db.Schema())
+
+        query_plan_db.execute_sql("CREATE TABLE per (x int)")
+        tables = query_plan_db.execute_sql("SHOW TABLES")
+        assert 'per' in tables
+
+        query_plan_db.execute_sql("DROP TABLE per")
 
 
 # ─────── Cycle 7: End-to-end silent output ───────

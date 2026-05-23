@@ -462,9 +462,10 @@ def execute_insert(ast):
     columns = ast.get('columns')
     values = ast['values']
 
-    schema_obj = schema_db.Schema()
+    schema_obj = common_db.shared_schema
+    if schema_obj is None:
+        schema_obj = schema_db.Schema()
     if not schema_obj.find_table(table_name):
-        del schema_obj
         raise SqlExecutionError("Table '%s' does not exist" % table_name)
 
     storage = storage_db.Storage(table_name)
@@ -473,7 +474,6 @@ def execute_insert(ast):
     if columns is None:
         if len(values) != len(field_list):
             del storage
-            del schema_obj
             raise SqlExecutionError("Column count mismatch: expected %d values, got %d" % (len(field_list), len(values)))
         value_strings = []
         for val_dict in values:
@@ -489,7 +489,6 @@ def execute_insert(ast):
 
         if len(col_names) != len(values):
             del storage
-            del schema_obj
             raise SqlExecutionError("Column count mismatch: %d columns but %d values" % (len(col_names), len(values)))
 
         col_val_map = {}
@@ -503,14 +502,12 @@ def execute_insert(ast):
                 value_strings.append(col_val_map[fname_clean])
             else:
                 del storage
-                del schema_obj
                 raise SqlExecutionError("No value provided for field '%s'" % fname.strip())
 
     for i, (fname, ftype, flen) in enumerate(field_list):
         is_valid, converted, error_msg = common_db.validate_and_convert_value(value_strings[i], ftype, flen)
         if not is_valid:
             del storage
-            del schema_obj
             raise SqlExecutionError("Invalid value for field '%s': %s" % (fname.strip(), error_msg))
         value_strings[i] = converted
 
@@ -520,7 +517,6 @@ def execute_insert(ast):
     else:
         print("Insert failed.")
     del storage
-    del schema_obj
     return result
 
 
@@ -532,9 +528,10 @@ def execute_update(ast):
     assignments = ast['assignments']
     conditions = ast.get('where', [])
 
-    schema_obj = schema_db.Schema()
+    schema_obj = common_db.shared_schema
+    if schema_obj is None:
+        schema_obj = schema_db.Schema()
     if not schema_obj.find_table(table_name):
-        del schema_obj
         raise SqlExecutionError("Table '%s' does not exist" % table_name)
 
     storage = storage_db.Storage(table_name)
@@ -550,7 +547,6 @@ def execute_update(ast):
         fname = assign['field'].strip().lower()
         if fname not in field_map:
             del storage
-            del schema_obj
             raise SqlExecutionError("Unknown field '%s'" % assign['field'])
         fidx, ftype, flen = field_map[fname]
 
@@ -560,12 +556,10 @@ def execute_update(ast):
             is_valid, converted, error_msg = common_db.validate_and_convert_value(val_str, ftype, flen)
             if not is_valid:
                 del storage
-                del schema_obj
                 raise SqlExecutionError("Invalid value for field '%s': %s" % (assign['field'], error_msg))
             update_pairs.append((fidx, converted))
         else:
             del storage
-            del schema_obj
             raise SqlExecutionError("UPDATE SET only supports literal values")
 
     context = {
@@ -599,7 +593,6 @@ def execute_update(ast):
     if not matching_indices:
         print("0 rows updated.")
         del storage
-        del schema_obj
         return 0
 
     # Strategy: delete table data, recreate, and re-insert with modifications
@@ -635,7 +628,6 @@ def execute_update(ast):
     print("%d row(s) updated." % total_updated)
     del new_storage
     del storage
-    del schema_obj
     return total_updated
 
 
@@ -646,9 +638,10 @@ def execute_delete(ast):
     table_name = ast['table'].strip()
     conditions = ast.get('where', [])
 
-    schema_obj = schema_db.Schema()
+    schema_obj = common_db.shared_schema
+    if schema_obj is None:
+        schema_obj = schema_db.Schema()
     if not schema_obj.find_table(table_name):
-        del schema_obj
         raise SqlExecutionError("Table '%s' does not exist" % table_name)
 
     storage = storage_db.Storage(table_name)
@@ -686,7 +679,6 @@ def execute_delete(ast):
             del new_storage
         print("%d row(s) deleted." % total_to_delete)
         del storage
-        del schema_obj
         return total_to_delete
 
     # Simple equality condition — use delete_record directly
@@ -711,7 +703,6 @@ def execute_delete(ast):
             deleted_count = storage.delete_record(field_idx, val_str)
             print("%d row(s) deleted." % deleted_count)
             del storage
-            del schema_obj
             return deleted_count
 
     # Complex conditions — delete all + re-insert non-matching
@@ -747,7 +738,6 @@ def execute_delete(ast):
     print("%d row(s) deleted." % deleted_count)
     del new_storage
     del storage
-    del schema_obj
     return deleted_count
 
 
@@ -766,9 +756,10 @@ def execute_create_table(ast):
         if len(fname) > 10:
             raise SqlExecutionError("Field name '%s' exceeds maximum length of 10" % fname)
 
-    schema_obj = schema_db.Schema()
+    schema_obj = common_db.shared_schema
+    if schema_obj is None:
+        schema_obj = schema_db.Schema()
     if schema_obj.find_table(table_name):
-        del schema_obj
         raise SqlExecutionError("Table '%s' already exists" % table_name)
 
     storage = storage_db.Storage.create_table(table_name, fields)
@@ -776,7 +767,6 @@ def execute_create_table(ast):
     del storage
 
     schema_obj.appendTable(table_name, field_list)
-    del schema_obj
 
     print("Table '%s' created." % table_name)
     return True
@@ -788,9 +778,10 @@ def execute_drop_table(ast):
 
     table_name = ast['table'].strip()
 
-    schema_obj = schema_db.Schema()
+    schema_obj = common_db.shared_schema
+    if schema_obj is None:
+        schema_obj = schema_db.Schema()
     if not schema_obj.find_table(table_name):
-        del schema_obj
         raise SqlExecutionError("Table '%s' does not exist" % table_name)
 
     index_catalog.drop_table_indexes(table_name)
@@ -800,7 +791,6 @@ def execute_drop_table(ast):
     del storage
 
     schema_obj.delete_table_schema(table_name)
-    del schema_obj
 
     print("Table '%s' dropped." % table_name)
     return True
@@ -847,14 +837,14 @@ def execute_create_index(ast):
     table_name = ast['table'].strip()
     field_name = ast['field'].strip()
 
-    schema_obj = schema_db.Schema()
+    schema_obj = common_db.shared_schema
+    if schema_obj is None:
+        schema_obj = schema_db.Schema()
     if not schema_obj.find_table(table_name):
-        del schema_obj
         raise SqlExecutionError("Table '%s' does not exist" % table_name)
 
     field_list = schema_obj.viewTableStructure(table_name)
     if field_list is None:
-        del schema_obj
         raise SqlExecutionError("Failed to get table structure for '%s'" % table_name)
 
     found = False
@@ -864,12 +854,10 @@ def execute_create_index(ast):
             found = True
             break
     if not found:
-        del schema_obj
         raise SqlExecutionError("Field '%s' does not exist in table '%s'" % (field_name, table_name))
 
     indexed = index_catalog.get_indexed_fields(table_name)
     if field_name in indexed:
-        del schema_obj
         raise SqlExecutionError("Index on '%s.%s' already exists" % (table_name, field_name))
 
     idx = index_db.Index(table_name)
@@ -881,10 +869,7 @@ def execute_create_index(ast):
         index_catalog.add_index(table_name, field_name)
         print("CREATE INDEX %s.%s OK" % (table_name, field_name))
     else:
-        del schema_obj
         raise SqlExecutionError("Failed to create index on '%s.%s'" % (table_name, field_name))
-
-    del schema_obj
     return ok
 
 
@@ -901,7 +886,9 @@ def execute_drop_index(ast):
 def execute_show_tables():
     from . import schema_db
 
-    schema_obj = schema_db.Schema()
+    schema_obj = common_db.shared_schema
+    if schema_obj is None:
+        schema_obj = schema_db.Schema()
     tables = schema_obj.get_table_name_list()
     if not tables:
         print("No tables found.")
@@ -909,7 +896,6 @@ def execute_show_tables():
         print("Tables:")
         for t in tables:
             print("  %s" % t)
-    del schema_obj
     return tables
 
 
@@ -941,14 +927,14 @@ def execute_describe(ast):
     from . import schema_db
 
     table_name = ast['table'].strip()
-    schema_obj = schema_db.Schema()
+    schema_obj = common_db.shared_schema
+    if schema_obj is None:
+        schema_obj = schema_db.Schema()
     if not schema_obj.find_table(table_name):
-        del schema_obj
         raise SqlExecutionError("Table '%s' does not exist" % table_name)
 
     field_list = schema_obj.viewTableStructure(table_name)
     if field_list is None:
-        del schema_obj
         raise SqlExecutionError("Failed to get structure for '%s'" % table_name)
 
     print("{:<15} {:<15} {:<10}".format("Field", "Type", "Length"))
@@ -957,6 +943,4 @@ def execute_describe(ast):
         fn = fname.strip() if isinstance(fname, str) else fname.strip().decode('utf-8')
         type_str = {0: "String", 1: "VarString", 2: "Integer", 3: "Boolean"}.get(ftype, "Unknown")
         print("{:<15} {:<15} {:<10}".format(fn, type_str, flen))
-
-    del schema_obj
     return field_list

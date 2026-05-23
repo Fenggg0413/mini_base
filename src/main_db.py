@@ -40,8 +40,8 @@ def main():
 
     # 初始化事务管理器并进行崩溃恢复
     transaction_db.get_transaction_manager()
-    # 加载 schema（确保 all.sch 就绪）
-    schema_db.Schema()
+    # 加载共享 Schema（避免每个 execute_* 重建）
+    common_db.shared_schema = schema_db.Schema()
 
     while True:
         try:
