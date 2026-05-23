@@ -1,0 +1,132 @@
+"""
+test_index_integration.py —— 索引集成测试：目录管理、delete_index_entry、
+查询加速等。
+"""
+
+import os
+import pytest
+from src import common_db
+from src import index_db
+from src import index_catalog
+
+
+BLOCK_SIZE = common_db.BLOCK_SIZE
+
+
+@pytest.fixture
+def tmp_data(tmp_path, monkeypatch):
+    """Redirect DATA_DIR to tmp_path for isolation."""
+    monkeypatch.setattr(common_db, 'DATA_DIR', str(tmp_path))
+    # 确保目录存在
+    os.makedirs(str(tmp_path), exist_ok=True)
+    yield tmp_path
+
+
+@pytest.fixture
+def fresh_catalog(tmp_data):
+    """Ensure a clean catalog file."""
+    cat_path = common_db.data_path('index.cat')
+    if os.path.exists(cat_path):
+        os.remove(cat_path)
+    return tmp_data
+
+
+# ─── Index Catalog ─────────────────────────────────────────────────
+
+class TestIndexCatalog:
+    def test_add_and_get_index(self, fresh_catalog):
+        assert index_catalog.add_index('student', 'sid') is True
+        fields = index_catalog.get_indexed_fields('student')
+        assert 'sid' in fields
+
+    def test_add_duplicate_index_fails(self, fresh_catalog):
+        index_catalog.add_index('student', 'sid')
+        assert index_catalog.add_index('student', 'sid') is False
+
+    def test_remove_index(self, fresh_catalog):
+        index_catalog.add_index('student', 'sid')
+        assert index_catalog.remove_index('student', 'sid') is True
+        fields = index_catalog.get_indexed_fields('student')
+        assert 'sid' not in fields
+
+    def test_remove_nonexistent_index(self, fresh_catalog):
+        assert index_catalog.remove_index('student', 'sid') is False
+
+    def test_list_all_indexes(self, fresh_catalog):
+        index_catalog.add_index('student', 'sid')
+        index_catalog.add_index('course', 'cid')
+        all_idx = index_catalog.list_all_indexes()
+        assert ('student', 'sid') in all_idx
+        assert ('course', 'cid') in all_idx
+
+    def test_drop_table_indexes(self, fresh_catalog):
+        index_catalog.add_index('student', 'sid')
+        index_catalog.add_index('student', 'name')
+        index_catalog.drop_table_indexes('student')
+        assert index_catalog.get_indexed_fields('student') == []
+
+    def test_multiple_indexes_on_same_table(self, fresh_catalog):
+        index_catalog.add_index('student', 'sid')
+        index_catalog.add_index('student', 'name')
+        fields = index_catalog.get_indexed_fields('student')
+        assert 'sid' in fields
+        assert 'name' in fields
+
+
+# ─── delete_index_entry ─────────────────────────────────────────────
+
+class TestDeleteIndexEntry:
+    @pytest.fixture
+    def idx(self, tmp_data):
+        index = index_db.Index('test_del')
+        yield index
+        if getattr(index, 'f_handle', None) and getattr(index, 'open', False):
+            index.f_handle.close()
+            index.open = False
+
+    def test_delete_from_single_entry(self, idx):
+        idx.insert_index_entry('a', 1, 0)
+        assert idx.search_index('a') == [(1, 0)]
+        assert idx.delete_index_entry('a', 1, 0) is True
+        assert idx.search_index('a') == []
+
+    def test_delete_nonexistent_returns_false(self, idx):
+        idx.insert_index_entry('a', 1, 0)
+        assert idx.delete_index_entry('b', 1, 0) is False
+        assert idx.delete_index_entry('a', 2, 0) is False
+
+    def test_delete_one_of_duplicate_keys(self, idx):
+        idx.insert_index_entry('a', 1, 0)
+        idx.insert_index_entry('a', 2, 1)
+        assert idx.delete_index_entry('a', 1, 0) is True
+        assert idx.search_index('a') == [(2, 1)]
+
+    def test_delete_from_empty_tree(self, idx):
+        assert idx.delete_index_entry('a', 1, 0) is False
+
+    def test_delete_preserves_other_entries(self, idx):
+        idx.insert_index_entry('a', 1, 0)
+        idx.insert_index_entry('b', 2, 0)
+        idx.insert_index_entry('c', 3, 0)
+        assert idx.delete_index_entry('b', 2, 0) is True
+        assert (1, 0) in idx.search_index('a')
+        assert idx.search_index('b') == []
+        assert (3, 0) in idx.search_index('c')
+
+    @pytest.fixture
+    def idx_small(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(common_db, 'DATA_DIR', str(tmp_path))
+        monkeypatch.setattr(index_db, 'MAX_NUM_OF_KEYS', 5)
+        index = index_db.Index('test_del_small')
+        yield index
+        if getattr(index, 'f_handle', None) and getattr(index, 'open', False):
+            index.f_handle.close()
+            index.open = False
+
+    def test_delete_after_split(self, idx_small):
+        for i in range(8):
+            idx_small.insert_index_entry(chr(ord('a') + i), i + 1, i)
+        # Delete a few entries (for i=2: key='c', block_id=3, offset=2)
+        assert idx_small.delete_index_entry('c', 3, 2) is True
+        assert idx_small.search_index('c') == []
+        assert (1, 0) in idx_small.search_index('a')

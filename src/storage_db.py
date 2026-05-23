@@ -62,6 +62,7 @@ import ctypes
 import datetime
 from . import transaction_db
 from . import common_db
+from . import index_catalog
 
 
 # --------------------------------------------
@@ -290,10 +291,11 @@ class Storage(object):
             )
 
         # Step5: Write new record into file xxx.dat
-        # update data_block_num
+        # update data_block_num in directory block
         self.f_handle.seek(0)
-        self.buf = ctypes.create_string_buffer(struct.calcsize('!ii'))
-        struct.pack_into('!ii', self.buf, 0, 0, self.data_block_num)
+        self.buf = ctypes.create_string_buffer(struct.calcsize('!iii'))
+        num_of_fields = getattr(self, 'num_of_fields', 0)
+        struct.pack_into('!iii', self.buf, 0, 0, self.data_block_num, num_of_fields)
         self.f_handle.write(self.buf)
         self.f_handle.flush()
 
@@ -323,10 +325,13 @@ class Storage(object):
         self.f_handle.write(self.buf.raw)
         self.f_handle.flush()
 
-        # 如果启用了事务，提交后确保持久化
+        # 如果启用了事务，确保持久化
         if txn_id is not None:
             # 确保数据写入磁盘
             os.fsync(self.f_handle.fileno())
+
+        # 更新索引
+        self._update_indexes('insert', tuple(tmpRecord), last_Position)
 
         return True
 
@@ -384,9 +389,10 @@ class Storage(object):
     def __del__(self):  # write the metahead information in head object to file
         if getattr(self, 'open', False) and getattr(self, 'f_handle', None):
             self.f_handle.seek(0)
-            self.buf = ctypes.create_string_buffer(struct.calcsize('!ii'))
+            self.buf = ctypes.create_string_buffer(struct.calcsize('!iii'))
             data_block_num = getattr(self, 'data_block_num', 0)
-            struct.pack_into('!ii', self.buf, 0, 0, data_block_num)
+            num_of_fields = getattr(self, 'num_of_fields', 0)
+            struct.pack_into('!iii', self.buf, 0, 0, data_block_num, num_of_fields)
             self.f_handle.write(self.buf)
             self.f_handle.flush()
             self.f_handle.close()
@@ -451,6 +457,83 @@ class Storage(object):
         print('\nCurrent data in the table:')
         self.show_table_data()
 
+    def get_record_by_position(self, block_id, record_id):
+        """根据 (block_id, record_id) 位置读取单条记录，返回 tuple 或 None。"""
+        if block_id <= 0 or block_id > self.data_block_num:
+            return None
+
+        self.f_handle.seek(BLOCK_SIZE * block_id)
+        block_buf = self.f_handle.read(BLOCK_SIZE)
+        if len(block_buf) < BLOCK_SIZE:
+            return None
+
+        _, num_records = struct.unpack_from('!ii', block_buf, 0)
+        if record_id < 0 or record_id >= num_records:
+            return None
+
+        record_head_len = struct.calcsize('!ii10s')
+        record_content_len = sum(x[2] for x in self.field_name_list)
+
+        offset_pos = struct.calcsize('!ii') + record_id * struct.calcsize('!i')
+        data_offset = struct.unpack_from('!i', block_buf, offset_pos)[0]
+
+        record_raw = struct.unpack_from('!' + str(record_content_len) + 's', block_buf, data_offset + record_head_len)[0]
+
+        tmp = 0
+        values = []
+        for field in self.field_name_list:
+            val = record_raw[tmp:tmp + field[2]].strip()
+            tmp += field[2]
+            if field[1] == 2:
+                val = int(val)
+            elif field[1] == 3:
+                if isinstance(val, bytes):
+                    val = val.strip() == b'1' or val.strip().lower() == b'true'
+                else:
+                    val = val.strip().lower() in ('1', 'true')
+            else:
+                if isinstance(val, bytes):
+                    val = val.decode('utf-8')
+            values.append(val)
+
+        return tuple(values)
+
+    def _update_indexes(self, action, record, position):
+        """在 DML 操作后维护索引。
+        action: 'insert' 或 'delete'
+        record: tuple，记录值
+        position: (block_id, record_offset)
+        """
+        indexed_fields = index_catalog.get_indexed_fields(self.tableName)
+        if not indexed_fields:
+            return
+
+        from . import index_db as _idx_mod
+
+        field_map = {}
+        for i, (fname, ftype, flen) in enumerate(self.field_name_list):
+            fname_str = fname.strip() if isinstance(fname, str) else fname.strip().decode('utf-8')
+            field_map[fname_str] = (i, ftype)
+
+        for indexed_field in indexed_fields:
+            if indexed_field not in field_map:
+                continue
+            idx = _idx_mod.Index(self.tableName)
+            fi, ftype = field_map[indexed_field]
+            field_value = record[fi]
+            if ftype == 2:
+                field_value = str(field_value)
+            elif ftype == 3:
+                field_value = '1' if field_value else '0'
+            elif isinstance(field_value, bytes):
+                field_value = field_value.decode('utf-8')
+
+            if action == 'insert':
+                idx.insert_index_entry(field_value, position[0], position[1])
+            elif action == 'delete':
+                idx.delete_index_entry(field_value, position[0], position[1])
+            idx.close()
+
     def _find_matching_records(self, field_index, field_value):
         """Find indices of records matching the given field value."""
         matching_indices = []
@@ -498,7 +581,13 @@ class Storage(object):
             for i, record in enumerate(self.record_list):
                 print(f"Record {i}: {record}")
             return 0
-        
+
+        # 从索引中删除匹配记录
+        for idx in to_delete_indices:
+            record = self.record_list[idx]
+            pos = self.record_Position[idx]
+            self._update_indexes('delete', record, pos)
+
         # Save the number of data blocks before deletion
         old_data_block_num = self.data_block_num
         
@@ -515,8 +604,8 @@ class Storage(object):
             
             # Update the number of data blocks in the file header
             self.f_handle.seek(0)
-            self.buf = ctypes.create_string_buffer(struct.calcsize('!ii'))
-            struct.pack_into('!ii', self.buf, 0, 0, self.data_block_num)
+            self.buf = ctypes.create_string_buffer(struct.calcsize('!iii'))
+            struct.pack_into('!iii', self.buf, 0, 0, self.data_block_num, self.num_of_fields)
             self.f_handle.write(self.buf)
             self.f_handle.flush()
             
@@ -542,8 +631,8 @@ class Storage(object):
         
         # Update the number of data blocks in the file header
         self.f_handle.seek(0)
-        self.buf = ctypes.create_string_buffer(struct.calcsize('!ii'))
-        struct.pack_into('!ii', self.buf, 0, 0, self.data_block_num)
+        self.buf = ctypes.create_string_buffer(struct.calcsize('!iii'))
+        struct.pack_into('!iii', self.buf, 0, 0, self.data_block_num, self.num_of_fields)
         self.f_handle.write(self.buf)
         self.f_handle.flush()
         
@@ -668,6 +757,15 @@ class Storage(object):
             for i, record in enumerate(self.record_list):
                 print(f"Record {i}: {record}")
             return 0
+
+        # 判断被更新的字段是否有索引
+        updated_field_name = self.field_name_list[update_field_index][0]
+        if isinstance(updated_field_name, bytes):
+            updated_field_name = updated_field_name.strip().decode('utf-8')
+        else:
+            updated_field_name = updated_field_name.strip()
+        indexed_fields = index_catalog.get_indexed_fields(self.tableName)
+        need_index_update = updated_field_name in indexed_fields
             
         # 获取事务管理器(如果启用事务)
         txn_manager = None
@@ -708,8 +806,18 @@ class Storage(object):
             
             # 更新内存中的记录
             record_list = list(self.record_list[idx])
+            old_record = tuple(record_list)
             record_list[update_field_index] = update_value
             self.record_list[idx] = tuple(record_list)
+
+            # 构建新记录 tuple 用于索引更新
+            new_record = tuple(self.record_list[idx])
+
+            # 如果更新字段有索引，先删旧索引再插新索引
+            if need_index_update:
+                pos = self.record_Position[idx]
+                self._update_indexes('delete', old_record, pos)
+                self._update_indexes('insert', new_record, pos)
             
             # Convert record to string format
             record = self.record_list[idx]

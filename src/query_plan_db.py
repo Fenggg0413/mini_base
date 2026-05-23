@@ -5,6 +5,8 @@ import os
 
 from . import common_db
 from . import storage_db
+from . import index_db
+from . import index_catalog
 
 
 class SqlExecutionError(Exception):
@@ -66,6 +68,65 @@ def _scan_table(table_name):
         'table_norm': _norm(table_name),
         'columns': column_meta,
         'rows': rows,
+        'storage': storage,
+    }
+
+
+def _index_scan_table(table_name, field_name, field_value):
+    """用索引加速的单表扫描：通过索引查找匹配记录，再从 Storage 按位置读取。"""
+    table_name_raw = _resolve_table_name(table_name)
+
+    idx = index_db.Index(table_name_raw)
+    results = idx.search_index(field_value)
+    idx.close()
+
+    if not results:
+        storage = storage_db.Storage(table_name_raw)
+        fields = storage.getFieldList()
+        column_meta = []
+        for fn, ft, _fl in fields:
+            name = fn.strip() if isinstance(fn, str) else fn.strip().decode('utf-8', errors='replace')
+            column_meta.append({'name': name, 'type': ft})
+        return {
+            'table': table_name_raw,
+            'table_norm': _norm(table_name_raw),
+            'columns': column_meta,
+            'rows': [],
+            'storage': storage,
+        }
+
+    storage = storage_db.Storage(table_name_raw)
+    fields = storage.getFieldList()
+
+    column_meta = []
+    for fn, ft, _fl in fields:
+        name = fn.strip() if isinstance(fn, str) else fn.strip().decode('utf-8', errors='replace')
+        column_meta.append({'name': name, 'type': ft})
+
+    rows = []
+    seen = set()
+    for blk_id, rec_id in results:
+        pos_key = (blk_id, rec_id)
+        if pos_key in seen:
+            continue
+        seen.add(pos_key)
+        record = storage.get_record_by_position(blk_id, rec_id)
+        if record is None:
+            continue
+        row = {}
+        for i, col in enumerate(column_meta):
+            value = record[i]
+            if col['type'] in (0, 1):
+                value = _decode_if_bytes(value)
+            row[(_norm(table_name_raw), _norm(col['name']))] = value
+        rows.append(row)
+
+    return {
+        'table': table_name_raw,
+        'table_norm': _norm(table_name_raw),
+        'columns': column_meta,
+        'rows': rows,
+        'storage': storage,
     }
 
 
@@ -223,7 +284,50 @@ def construct_logical_tree():
 
 def _run_plan(plan):
     tables = plan['child']['child']['tables']
-    scans = [_scan_table(table_name) for table_name in tables]
+    conditions = plan['child']['conditions']
+
+    use_index = False
+    index_table = None
+    index_field = None
+    index_value = None
+
+    if conditions and len(tables) == 1:
+        indexed_fields = index_catalog.get_indexed_fields(tables[0].strip())
+        for cond in conditions:
+            if cond['op'] != '=':
+                continue
+            left = cond['left']
+            right = cond['right']
+            if left['type'] == 'column' and right['type'] == 'literal':
+                col_name = _norm(left['name'])
+                for fname in indexed_fields:
+                    if col_name == _norm(fname):
+                        use_index = True
+                        index_field = fname
+                        index_value = right['value']
+                        index_table = tables[0]
+                        break
+            elif right['type'] == 'column' and left['type'] == 'literal':
+                col_name = _norm(right['name'])
+                for fname in indexed_fields:
+                    if col_name == _norm(fname):
+                        use_index = True
+                        index_field = fname
+                        index_value = left['value']
+                        index_table = tables[0]
+                        break
+            if use_index:
+                break
+
+    if use_index:
+        try:
+            scan = _index_scan_table(index_table, index_field, index_value)
+            scans = [scan]
+        except Exception:
+            scans = [_scan_table(t) for t in tables]
+    else:
+        scans = [_scan_table(t) for t in tables]
+
     context = _build_scan_context(scans)
 
     rows = [{}]
@@ -236,7 +340,6 @@ def _run_plan(plan):
         else:
             rows = _cross_join(rows, scan['rows'])
 
-    conditions = plan['child']['conditions']
     if conditions:
         rows = _apply_filter(rows, conditions, context)
 

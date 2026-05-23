@@ -20,11 +20,15 @@ from . import lex_db  # for lex, where data is stored in binary format
 from . import parser_db  # for yacc, where ddata is tored in binary format
 from . import common_db  # the global variables, functions, constants in the program
 from . import transaction_db  # 导入事务管理模块
+from . import index_db  # 导入索引管理模块
+from . import index_catalog  # 导入索引目录管理模块
 
 PROMPT_STR = 'Input your choice  \n1:add a new table structure and data \n2:delete a table structure and data\
 \n3:view a table structure and data \n4:delete all tables and data \n5:select from where clause\
 \n6:delete a row according to field keyword \n7:update a row according to field keyword \
-\n8:begin a transaction \n9:commit transaction \n10:abort transaction \n. to quit):\n'
+\n8:begin a transaction \n9:commit transaction \n10:abort transaction \
+\n11:create an index on a table field \n12:drop an index \n13:view all indexes \
+\n. to quit):\n'
 
 
 # --------------------------
@@ -72,6 +76,8 @@ def main():
             table_name = input('please input the name of the table to be deleted:')
             if schemaObj.find_table(table_name.strip()):
                 if schemaObj.delete_table_schema(table_name.strip()):
+                    # 先删除该表的所有索引
+                    index_catalog.drop_table_indexes(table_name.strip())
                     dataObj = storage_db.Storage(table_name.strip())
                     dataObj.delete_table_data(table_name.strip())
                     del dataObj
@@ -109,6 +115,8 @@ def main():
                 table_name = table_name_list[i].strip()
 
                 if table_name:
+                    # 删除该表的所有索引
+                    index_catalog.drop_table_indexes(table_name)
                     stObj = storage_db.Storage(table_name)
                     stObj.delete_table_data(table_name.strip())  # delete table data
                     del stObj
@@ -277,14 +285,68 @@ def main():
             
             choice = input(PROMPT_STR)
         
+        elif choice == '11':  # 创建索引
+            table_name = input('please input the table name:').strip()
+            if not schemaObj.find_table(table_name):
+                print(f'Table {table_name} does not exist')
+            else:
+                field_name = input('please input the field name to index:').strip()
+                field_list = schemaObj.viewTableStructure(table_name)
+                if field_list is None:
+                    print('Failed to get table structure')
+                else:
+                    found = False
+                    for fn in field_list:
+                        fn_str = fn[0].strip() if isinstance(fn[0], str) else fn[0].strip().decode('utf-8')
+                        if fn_str == field_name:
+                            found = True
+                            break
+                    if not found:
+                        print(f"Field '{field_name}' does not exist in table '{table_name}'")
+                    else:
+                        indexed = index_catalog.get_indexed_fields(table_name)
+                        if field_name in indexed:
+                            print(f"Index on '{table_name}.{field_name}' already exists")
+                        else:
+                            idx = index_db.Index(table_name)
+                            ok = idx.create_index(field_name)
+                            idx.close()
+                            if ok:
+                                index_catalog.add_index(table_name, field_name)
+                                print(f"Index on '{table_name}.{field_name}' created successfully")
+                            else:
+                                print(f"Failed to create index on '{table_name}.{field_name}'")
+
+            choice = input(PROMPT_STR)
+
+        elif choice == '12':  # 删除索引
+            table_name = input('please input the table name:').strip()
+            field_name = input('please input the field name to drop index:').strip()
+            if index_catalog.remove_index(table_name, field_name):
+                print(f"Index on '{table_name}.{field_name}' dropped successfully")
+            else:
+                print(f"No index found on '{table_name}.{field_name}'")
+
+            choice = input(PROMPT_STR)
+
+        elif choice == '13':  # 查看所有索引
+            all_indexes = index_catalog.list_all_indexes()
+            if not all_indexes:
+                print('No indexes found')
+            else:
+                print('Indexes:')
+                for tname, fname in all_indexes:
+                    print(f'  {tname}.{fname}')
+            choice = input(PROMPT_STR)
+        
         elif choice == '.':
             print('main loop finishies')
             del schemaObj
             break
 
         else:
-            if choice not in ['1','2','3','4','5','6','7','8','9','10']:
-                print(f"Invalid choice: '{choice}'. Please enter a number 1-10 or '.' to quit.")
+            if choice not in ['1','2','3','4','5','6','7','8','9','10','11','12','13']:
+                print(f"Invalid choice: '{choice}'. Please enter a number 1-13 or '.' to quit.")
 
     print('main loop finish!')
 
