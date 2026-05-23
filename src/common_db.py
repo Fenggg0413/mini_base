@@ -26,6 +26,8 @@ def data_path(name):
 global_lexer=None
 global_parser=None
 current_transaction_id=None # 全局事务ID
+shared_schema = None         # 由 main_db.main() 初始化，避免每个 execute_* 重建 Schema
+VERBOSE = False              # True 时输出调试信息
 
 # ----------------------------------------------------------------------------------------
 #  Validate and convert input value according to field type and length constraints.
