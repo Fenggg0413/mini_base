@@ -690,13 +690,6 @@ class Storage(object):
         # Recalculate the number of data blocks
         self.data_block_num = (len(self.record_list) + MAX_RECORD_NUM - 1) // MAX_RECORD_NUM
         
-        # Update the number of data blocks in the file header
-        self.f_handle.seek(0)
-        self.buf = ctypes.create_string_buffer(struct.calcsize('!iii'))
-        struct.pack_into('!iii', self.buf, 0, 0, self.data_block_num, self.num_of_fields)
-        self.f_handle.write(self.buf)
-        self.f_handle.flush()
-        
         # Rewrite each data block
         for block_id in range(1, self.data_block_num + 1):
             # Calculate the number of records in the current block
@@ -764,7 +757,17 @@ class Storage(object):
                 self.f_handle.seek(BLOCK_SIZE * block_id)
                 self.f_handle.write(empty_block)
                 self.f_handle.flush()
-        
+
+        self.f_handle.flush()
+        os.fsync(self.f_handle.fileno())
+
+        self.f_handle.seek(0)
+        header_buf = ctypes.create_string_buffer(struct.calcsize('!iii'))
+        struct.pack_into('!iii', header_buf, 0, 0, self.data_block_num, self.num_of_fields)
+        self.f_handle.write(header_buf)
+        self.f_handle.flush()
+        os.fsync(self.f_handle.fileno())
+
         return len(deleted_indices)
     
     # ------------------------------

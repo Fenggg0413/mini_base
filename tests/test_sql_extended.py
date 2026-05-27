@@ -430,3 +430,39 @@ def test_insert_delete_max_record_num_consistent(isolated_data_dir):
 
     sto4 = storage_db.Storage('t')
     assert len(sto4.record_list) == initial_count
+
+
+def test_delete_record_data_blocks_written_before_header_update(isolated_data_dir, monkeypatch):
+    """模拟在写完文件头但未写完数据块时崩溃。"""
+    from src import storage_db
+    sto = storage_db.Storage.create_table('t', [('a', 2, 4)])
+    for i in range(20):
+        sto.insert_record([str(i)])
+    del sto
+
+    sto = storage_db.Storage('t')
+
+    write_log = []
+    orig_seek = sto.f_handle.seek
+    orig_write = sto.f_handle.write
+    current_offset = [0]
+
+    def tracked_seek(off, *a, **kw):
+        current_offset[0] = off
+        return orig_seek(off, *a, **kw)
+
+    def tracked_write(data):
+        write_log.append(current_offset[0])
+        return orig_write(data)
+
+    monkeypatch.setattr(sto.f_handle, 'seek', tracked_seek)
+    monkeypatch.setattr(sto.f_handle, 'write', tracked_write)
+
+    sto.delete_record(0, '5')
+
+    last_header_write = max(i for i, off in enumerate(write_log) if off == 0)
+    block_writes_after_header = [
+        off for off in write_log[last_header_write + 1:] if off != 0
+    ]
+    assert not block_writes_after_header, \
+        f"删除后还有数据块写入：{block_writes_after_header}"
