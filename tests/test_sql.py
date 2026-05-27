@@ -461,3 +461,17 @@ def test_parser_instance_is_singleton(isolated_data_dir):
 def test_no_global_parser_attribute_in_common_db():
     from src import common_db
     assert not hasattr(common_db, 'global_parser')
+
+
+def test_get_schema_returns_shared_when_set(isolated_data_dir):
+    from src import query_plan_db, schema_db, common_db
+    shared = schema_db.Schema()
+    common_db.shared_schema = shared
+    assert query_plan_db._get_schema() is shared
+
+
+def test_get_schema_falls_back_to_new_instance(isolated_data_dir):
+    from src import query_plan_db, common_db, schema_db
+    common_db.shared_schema = None
+    s = query_plan_db._get_schema()
+    assert isinstance(s, schema_db.Schema)

@@ -17,6 +17,14 @@ class SqlExecutionError(Exception):
     pass
 
 
+def _get_schema():
+    """返回共享 Schema 实例；shared_schema 未初始化时回退到新建。"""
+    from . import schema_db
+    if common_db.shared_schema is not None:
+        return common_db.shared_schema
+    return schema_db.Schema()
+
+
 def _norm(name):
     return name.lower()
 
@@ -363,8 +371,6 @@ def execute_sql(sql_str):
 
 def execute_select(ast):
     """Execute a SELECT statement with enhanced WHERE and ORDER BY."""
-    from . import schema_db
-
     tables = ast['tables']
     conditions = ast.get('where', [])
     order_by = ast.get('order_by', [])
@@ -457,15 +463,11 @@ def execute_select(ast):
 
 def execute_insert(ast):
     """Execute an INSERT statement."""
-    from . import schema_db
-
     table_name = ast['table'].strip()
     columns = ast.get('columns')
     values = ast['values']
 
-    schema_obj = common_db.shared_schema
-    if schema_obj is None:
-        schema_obj = schema_db.Schema()
+    schema_obj = _get_schema()
     if not schema_obj.find_table(table_name):
         raise SqlExecutionError("Table '%s' does not exist" % table_name)
 
@@ -523,15 +525,11 @@ def execute_insert(ast):
 
 def execute_update(ast):
     """Execute an UPDATE statement."""
-    from . import schema_db
-
     table_name = ast['table'].strip()
     assignments = ast['assignments']
     conditions = ast.get('where', [])
 
-    schema_obj = common_db.shared_schema
-    if schema_obj is None:
-        schema_obj = schema_db.Schema()
+    schema_obj = _get_schema()
     if not schema_obj.find_table(table_name):
         raise SqlExecutionError("Table '%s' does not exist" % table_name)
 
@@ -634,14 +632,10 @@ def execute_update(ast):
 
 def execute_delete(ast):
     """Execute a DELETE statement."""
-    from . import schema_db
-
     table_name = ast['table'].strip()
     conditions = ast.get('where', [])
 
-    schema_obj = common_db.shared_schema
-    if schema_obj is None:
-        schema_obj = schema_db.Schema()
+    schema_obj = _get_schema()
     if not schema_obj.find_table(table_name):
         raise SqlExecutionError("Table '%s' does not exist" % table_name)
 
@@ -744,8 +738,6 @@ def execute_delete(ast):
 
 def execute_create_table(ast):
     """Execute a CREATE TABLE statement."""
-    from . import schema_db
-
     table_name = ast['table'].strip()
     fields = ast['fields']
 
@@ -757,9 +749,7 @@ def execute_create_table(ast):
         if len(fname) > 10:
             raise SqlExecutionError("Field name '%s' exceeds maximum length of 10" % fname)
 
-    schema_obj = common_db.shared_schema
-    if schema_obj is None:
-        schema_obj = schema_db.Schema()
+    schema_obj = _get_schema()
     if schema_obj.find_table(table_name):
         raise SqlExecutionError("Table '%s' already exists" % table_name)
 
@@ -775,13 +765,9 @@ def execute_create_table(ast):
 
 def execute_drop_table(ast):
     """Execute a DROP TABLE statement."""
-    from . import schema_db
-
     table_name = ast['table'].strip()
 
-    schema_obj = common_db.shared_schema
-    if schema_obj is None:
-        schema_obj = schema_db.Schema()
+    schema_obj = _get_schema()
     if not schema_obj.find_table(table_name):
         raise SqlExecutionError("Table '%s' does not exist" % table_name)
 
@@ -833,14 +819,10 @@ def execute_rollback():
 
 
 def execute_create_index(ast):
-    from . import schema_db
-
     table_name = ast['table'].strip()
     field_name = ast['field'].strip()
 
-    schema_obj = common_db.shared_schema
-    if schema_obj is None:
-        schema_obj = schema_db.Schema()
+    schema_obj = _get_schema()
     if not schema_obj.find_table(table_name):
         raise SqlExecutionError("Table '%s' does not exist" % table_name)
 
@@ -888,11 +870,7 @@ def execute_drop_index(ast):
 
 
 def execute_show_tables():
-    from . import schema_db
-
-    schema_obj = common_db.shared_schema
-    if schema_obj is None:
-        schema_obj = schema_db.Schema()
+    schema_obj = _get_schema()
     tables = schema_obj.get_table_name_list()
     if not tables:
         print("No tables found.")
@@ -928,12 +906,8 @@ def execute_show_indexes(ast):
 
 
 def execute_describe(ast):
-    from . import schema_db
-
     table_name = ast['table'].strip()
-    schema_obj = common_db.shared_schema
-    if schema_obj is None:
-        schema_obj = schema_db.Schema()
+    schema_obj = _get_schema()
     if not schema_obj.find_table(table_name):
         raise SqlExecutionError("Table '%s' does not exist" % table_name)
 
