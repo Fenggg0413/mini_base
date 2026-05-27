@@ -297,7 +297,7 @@ class Schema(object):
     # delete all the contents in the schema file
     # ----------------------------------------
     def deleteAll(self):
-        self.headObj.tableFields=[]
+        self.headObj.tableFields = {}
         self.headObj.tableNames=[]
         self.fileObj.seek(0)
         self.fileObj.truncate(0)

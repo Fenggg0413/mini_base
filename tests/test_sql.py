@@ -420,3 +420,13 @@ class TestInsertEdgeCases:
         assert len(rows) > 0
         for r in rows:
             assert len(r) == 2
+
+
+def test_schema_deleteall_then_append_does_not_typeerror(isolated_data_dir):
+    """deleteAll 后再 appendTable 不应抛 TypeError。"""
+    from src import schema_db
+    schema = schema_db.Schema()
+    schema.appendTable('t1', [('a', 2, 10)])
+    schema.deleteAll()
+    schema.appendTable('t2', [('b', 2, 10)])  # 旧实现会抛 TypeError
+    assert schema.find_table('t2')
