@@ -430,3 +430,18 @@ def test_schema_deleteall_then_append_does_not_typeerror(isolated_data_dir):
     schema.deleteAll()
     schema.appendTable('t2', [('b', 2, 10)])  # 旧实现会抛 TypeError
     assert schema.find_table('t2')
+
+
+def test_schema_body_begin_index_is_instance_attribute(isolated_data_dir):
+    """两个 Schema 实例不应共享 body_begin_index。"""
+    from src import schema_db
+    s1 = schema_db.Schema()
+    s1.appendTable('t1', [('a', 2, 10)])
+    s1_offset = s1.body_begin_index
+
+    s2 = schema_db.Schema()
+    s2_offset = s2.body_begin_index
+
+    s1.appendTable('t2', [('b', 2, 10)])
+    assert s2.body_begin_index == s2_offset, \
+        "Schema 实例之间不能共享 body_begin_index"

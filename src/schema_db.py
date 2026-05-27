@@ -198,7 +198,7 @@ class Schema(object):
             if common_db.VERBOSE:
                 print ("offset of body in schema  file is ", tempOffset)
 
-            Schema.body_begin_index = tempOffset
+            self.body_begin_index = tempOffset
             nameList=[]
             fieldsList={}
              # it is a dictionary
