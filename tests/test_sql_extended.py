@@ -637,3 +637,36 @@ def test_recovery_after_explicit_rollback(isolated_data_dir):
     sto = storage_db.Storage('t')
     assert any(r[0] == 7 for r in sto.record_list), \
         "ROLLBACK 后记录应恢复原值"
+
+
+def test_btree_multi_level_with_sql_crud(isolated_data_dir, monkeypatch):
+    """MAX_NUM_OF_KEYS=5 + 跑 25 条 CRUD 验证多层 B+ 树。"""
+    from src import index_db, query_plan_db
+    monkeypatch.setattr(index_db, 'MAX_NUM_OF_KEYS', 5)
+
+    query_plan_db.execute_sql("CREATE TABLE t (k str(10), v int);")
+
+    for i in range(25):
+        query_plan_db.execute_sql(f"INSERT INTO t VALUES ('k{i:02d}', {i});")
+
+    query_plan_db.execute_sql("CREATE INDEX ON t(k);")
+
+    idx = index_db.Index('t', 'k')
+    idx._read_meta()
+    assert idx.number_of_levels >= 2, \
+        f"应至少 2 层，实际 {idx.number_of_levels}"
+    idx.close()
+
+    _, rows, _ = query_plan_db.execute_sql("SELECT * FROM t;")
+    assert len(rows) == 25
+
+    query_plan_db.execute_sql("UPDATE t SET v = 999 WHERE k = 'k12';")
+    _, rows2, _ = query_plan_db.execute_sql("SELECT * FROM t;")
+    matched = [r for r in rows2 if r[0] == 'k12']
+    assert len(matched) == 1
+    assert matched[0][1] == 999
+
+    query_plan_db.execute_sql("DELETE FROM t WHERE k = 'k12';")
+    _, rows3, _ = query_plan_db.execute_sql("SELECT * FROM t;")
+    assert len(rows3) == 24
+    assert all(r[0] != 'k12' for r in rows3)
