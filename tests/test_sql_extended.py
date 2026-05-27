@@ -387,3 +387,13 @@ class TestEndToEndSQL:
         result = query_plan_db.execute_sql("SHOW TABLES")
         assert 't1' in result
         assert 't2' in result
+
+
+def test_log_image_truncates_long_table_name(isolated_data_dir):
+    """log_image 对超长表名应截断而非抛异常。"""
+    from src import transaction_db
+    tm = transaction_db.TransactionManager()
+    txn = tm.begin_transaction()
+    long_name = 'a' * 100
+    tm.log_after_image(txn, long_name, b'dummy', 0, 0)
+    tm.commit_transaction(txn)

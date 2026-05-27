@@ -201,8 +201,10 @@ class TransactionManager:
             table_name_bytes = table_name.encode('utf-8')
         else:
             table_name_bytes = table_name
+        table_name_bytes = table_name_bytes[:20].ljust(20, b'\x00')
 
         location_bytes = f"{block_id}:{record_offset}".encode('utf-8')
+        location_bytes = location_bytes[:50].ljust(50, b'\x00')
 
         try:
             if not isinstance(record_data, bytes):
