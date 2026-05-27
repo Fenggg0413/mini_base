@@ -501,3 +501,139 @@ def test_recovery_finds_uncommitted_txn_with_only_before_image(isolated_data_dir
     tm2 = transaction_db.TransactionManager()
     assert tm2.next_txn_id > txn, \
         f"恢复后 next_txn_id ({tm2.next_txn_id}) 必须大于 leaked txn ({txn})"
+
+
+def test_update_records_by_indices_writes_log_and_maintains_index(isolated_data_dir):
+    from src import storage_db, transaction_db, index_db, index_catalog
+
+    sto = storage_db.Storage.create_table(
+        'students',
+        [('name', 0, 10), ('age', 2, 4)],
+    )
+    sto.insert_record(['Alice', '20'])
+    sto.insert_record(['Bob', '21'])
+    sto.insert_record(['Carol', '22'])
+    del sto
+
+    index_catalog.add_index('students', 'age')
+    idx = index_db.Index('students', 'age')
+    idx.create_index()
+    idx.close()
+
+    tm = transaction_db.get_transaction_manager()
+    txn = tm.begin_transaction()
+    sto2 = storage_db.Storage('students')
+    updated = sto2.update_records_by_indices([1], 1, 99, txn_id=txn)
+    assert updated == 1
+    tm.commit_transaction(txn)
+    del sto2
+
+    idx2 = index_db.Index('students', 'age')
+    assert idx2.search_index('99')
+    assert not idx2.search_index('21')
+    idx2.close()
+
+
+def test_delete_records_by_indices_writes_log_and_maintains_index(isolated_data_dir):
+    from src import storage_db, transaction_db, index_db, index_catalog
+
+    sto = storage_db.Storage.create_table('t', [('a', 2, 4)])
+    for i in range(5):
+        sto.insert_record([str(i)])
+    del sto
+
+    index_catalog.add_index('t', 'a')
+    idx = index_db.Index('t', 'a')
+    idx.create_index()
+    idx.close()
+
+    tm = transaction_db.get_transaction_manager()
+    txn = tm.begin_transaction()
+    sto2 = storage_db.Storage('t')
+    deleted = sto2.delete_records_by_indices([1, 3], txn_id=txn)
+    assert deleted == 2
+    tm.commit_transaction(txn)
+    del sto2
+
+    sto3 = storage_db.Storage('t')
+    assert len(sto3.record_list) == 3
+
+
+def test_execute_update_preserves_index_with_complex_where(isolated_data_dir):
+    from src import query_plan_db, index_catalog, index_db
+    query_plan_db.execute_sql("CREATE TABLE s (name str(10), age int);")
+    for n, a in [('A', 18), ('B', 25), ('C', 30)]:
+        query_plan_db.execute_sql(f"INSERT INTO s VALUES ('{n}', {a});")
+    query_plan_db.execute_sql("CREATE INDEX ON s(age);")
+
+    query_plan_db.execute_sql("UPDATE s SET age = 99 WHERE age > 20;")
+
+    idx = index_db.Index('s', 'age')
+    assert not idx.search_index('25')
+    assert not idx.search_index('30')
+    assert len(idx.search_index('99')) == 2
+    idx.close()
+
+
+def test_execute_update_writes_transaction_log(isolated_data_dir):
+    from src import query_plan_db
+    query_plan_db.execute_sql("CREATE TABLE s (name str(10), age int);")
+    query_plan_db.execute_sql("INSERT INTO s VALUES ('A', 20);")
+
+    query_plan_db.execute_sql("BEGIN;")
+    query_plan_db.execute_sql("UPDATE s SET age = 99 WHERE name = 'A';")
+    query_plan_db.execute_sql("ROLLBACK;")
+
+    from src import storage_db
+    sto = storage_db.Storage('s')
+    assert sto.record_list[0][1] == 20, \
+        f"ROLLBACK 后 age 应为 20，实际 {sto.record_list[0][1]}"
+
+
+def test_recovery_undo_uncommitted_insert(isolated_data_dir):
+    """BEGIN → UPDATE → 不 COMMIT → 重启，记录应被 undo。"""
+    from src import query_plan_db, transaction_db, storage_db
+    query_plan_db.execute_sql("CREATE TABLE t (a int);")
+    query_plan_db.execute_sql("INSERT INTO t VALUES (42);")
+    query_plan_db.execute_sql("BEGIN;")
+    query_plan_db.execute_sql("UPDATE t SET a = 99 WHERE a = 42;")
+    transaction_db.transaction_manager = None
+
+    transaction_db.get_transaction_manager()
+    sto = storage_db.Storage('t')
+    assert any(r[0] == 42 for r in sto.record_list), \
+        "未 COMMIT 的 UPDATE 应被 undo"
+
+
+def test_recovery_redo_committed_update(isolated_data_dir):
+    """BEGIN → UPDATE → COMMIT → 重启，after-image 应被 redo。"""
+    from src import query_plan_db, transaction_db, storage_db
+    query_plan_db.execute_sql("CREATE TABLE t (name str(10), v int);")
+    query_plan_db.execute_sql("INSERT INTO t VALUES ('x', 1);")
+    query_plan_db.execute_sql("BEGIN;")
+    query_plan_db.execute_sql("UPDATE t SET v = 99 WHERE name = 'x';")
+    query_plan_db.execute_sql("COMMIT;")
+
+    transaction_db.transaction_manager = None
+    transaction_db.get_transaction_manager()
+
+    sto = storage_db.Storage('t')
+    assert sto.record_list[0][1] == 99, \
+        f"已 COMMIT 的 UPDATE 应被 redo, 实际 v={sto.record_list[0][1]}"
+
+
+def test_recovery_after_explicit_rollback(isolated_data_dir):
+    """BEGIN → UPDATE → ROLLBACK → 重启，记录应回滚到原值。"""
+    from src import query_plan_db, transaction_db, storage_db
+    query_plan_db.execute_sql("CREATE TABLE t (a int);")
+    query_plan_db.execute_sql("INSERT INTO t VALUES (7);")
+    query_plan_db.execute_sql("BEGIN;")
+    query_plan_db.execute_sql("UPDATE t SET a = 99 WHERE a = 7;")
+    query_plan_db.execute_sql("ROLLBACK;")
+
+    transaction_db.transaction_manager = None
+    transaction_db.get_transaction_manager()
+
+    sto = storage_db.Storage('t')
+    assert any(r[0] == 7 for r in sto.record_list), \
+        "ROLLBACK 后记录应恢复原值"
