@@ -140,4 +140,4 @@ def set_lex_handle():
     common_db.global_lexer = lex.lex()
     if common_db.global_lexer is None:
         if common_db.VERBOSE:
-            print('wrong when the global_lex is created')
+            print('wrong when the global_lexer is created')

@@ -1,6 +1,6 @@
 # query_plan_db.py
 # Build and execute a logical plan for SQL queries.
-# Supports SELECT (with WHERE enhancements + ORDER BY), INSERT, UPDATE, DELETE, CREATE TABLE, DROP TABLE.
+# Supports SELECT, INSERT, UPDATE, DELETE, CREATE/DROP TABLE, CREATE/DROP INDEX, BEGIN/COMMIT/ROLLBACK, SHOW, DESCRIBE.
 
 import os
 

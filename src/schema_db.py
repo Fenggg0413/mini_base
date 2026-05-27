@@ -58,9 +58,9 @@ BODY_BEGIN_INDEX=META_HEAD_SIZE+TABLE_NAME_HEAD_SIZE            # Intitially, wh
 
 
 # -----------------------------
-# the table name is padded if its lenght is smaller than MAX_TABLE_NAME_WHEN
+# the table name is padded if its length is smaller than MAX_TABLE_NAME_LEN
 # input:
-#       tableName: the table name       
+#       tableName: the table name
 # -------------------------------
 def fillTableName(tableName):
     name = tableName.strip()
@@ -80,7 +80,6 @@ class Schema(object):
 
         if common_db.VERBOSE:
             print ('viewtablenames begin to execute')
-        # to be inserted here
         for i in self.headObj.tableNames:
             if common_db.VERBOSE:
                 print ('Table name is     ', i[0])
@@ -190,7 +189,7 @@ class Schema(object):
             if common_db.VERBOSE:
                 print ("there is something  in the all.sch")
             # in the following ? denotes bool type and  i denotes int type
-            isStored, tempTableNum, tempOffset = struct.unpack_from('!?ii', buf, 0)   #link:https://docs.python.org/2/library/struct.html
+            isStored, tempTableNum, tempOffset = struct.unpack_from('!?ii', buf, 0)
 
             if common_db.VERBOSE:
                 print ("tableNum in schema file is ", tempTableNum)
@@ -398,11 +397,7 @@ class Schema(object):
         
     # ----------------------------------------------
     # to write the main memory information into the schema file
-    # input
-    #       
-    # output
-    #       True or False
-    # ------------------------------------------------   
+    # ------------------------------------------------
 
     def WriteBuff(self):
         bufLen = META_HEAD_SIZE + TABLE_NAME_HEAD_SIZE + MAX_FIELD_SECTION_SIZE
@@ -480,6 +475,7 @@ class Schema(object):
                     print (False)
                 self.headObj.offsetOfBody = BODY_BEGIN_INDEX
                 self.headObj.isStored = False
+                self.WriteBuff()
             return True
         else:
             if common_db.VERBOSE:

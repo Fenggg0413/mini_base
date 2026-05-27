@@ -17,7 +17,7 @@ from .common_db import BLOCK_SIZE
 # ---------------------------------------------------------------------------------
 # block_id                                # 0
 # number_of_dat_blocks                    # at first it is 0 because there is no data in the table
-# number_of_fields or number_of_records   # the total number of fields for the table
+# number_of_fields                        # the total number of fields for the table
 # -----------------------------------------------------------------------------------------
 
 
@@ -47,7 +47,7 @@ from .common_db import BLOCK_SIZE
 # structre of one record
 # -----------------------------
 # pointer                     #offset of table schema in block id 0
-# length of record            # including record head and record content
+# length of record            # record content length only
 # time stamp of last update  # for example,1999-08-22
 # field_0_value
 # field_1_value
@@ -283,7 +283,9 @@ class Storage(object):
             if self.field_name_list[idx][1] == 3:
                 try:
                     val = insert_record[idx].strip().lower()
-                    tmpRecord.append(val in ('1', 'true'))
+                    bool_val = val in ('1', 'true')
+                    tmpRecord.append(bool_val)
+                    insert_record[idx] = '1' if bool_val else '0'
                 except (ValueError, TypeError):
                     return False
             insert_record[idx] = ' ' * (self.field_name_list[idx][2] - len(insert_record[idx])) + insert_record[idx]
@@ -383,8 +385,6 @@ class Storage(object):
 
     # ------------------------------
     # show the data structure and its data
-    # input:
-    #       t
     # -------------------------------------
 
     def show_table_data(self):
@@ -481,11 +481,6 @@ class Storage(object):
 
     # ----------------------------------------------------------------------------------------
     # Handle the process of inserting record into a table.
-    # Args:
-    #         data_obj: Storage object for the table
-    #         field_list: List of tuples containing field information (name, type, length)
-    # Returns:
-    #         None
     # ----------------------------------------------------------------------------------------
     def insert_records_from_input(self):
         """
@@ -556,7 +551,7 @@ class Storage(object):
         """在 DML 操作后维护索引。
         action: 'insert' 或 'delete'
         record: tuple，记录值
-        position: (block_id, record_offset)
+        position: (block_id, record_index)
         """
         indexed_fields = index_catalog.get_indexed_fields(self.tableName)
         if not indexed_fields:

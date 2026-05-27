@@ -16,10 +16,13 @@ lextab.py
 .idea/
 .vscode/
 .opencode/
+.claude/
+CLAUDE.md
 AGENTS.md
 
 # Tutorial
 tutorial/
+docs/
 
 # Runtime data directory (schema, tables, logs, indexes)
 data/

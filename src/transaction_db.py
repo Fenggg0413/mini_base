@@ -238,19 +238,6 @@ class TransactionManager:
         return True
 
 
-    #----------------------------------
-    # 从日志中恢复事务状态
-    # 功能：
-    #   在系统启动或崩溃恢复时，从日志文件中恢复事务状态
-    # 处理流程：
-    #   1. 分析阶段：确定已提交和未提交的事务
-    #   2. 重做阶段：重做已提交事务的操作
-    #   3. 撤销阶段：撤销未提交事务的操作
-    # 参数：
-    #   无
-    # 返回：
-    #   无
-    #----------------------------------
     def _read_log_entry(self, log_file):
         """Read a single log entry from the current file position.
         

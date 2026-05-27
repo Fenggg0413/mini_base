@@ -267,8 +267,8 @@ class Index(object):
 
                 right_keys = parent_keys[mid + 1:]
                 right_ptrs = parent_ptrs[mid + 1:]
-                right_last_ptr = parent_ptrs[mid]
-                left_last_ptr = parent_last_ptr
+                right_last_ptr = parent_last_ptr
+                left_last_ptr = parent_ptrs[mid]
 
                 new_right_id = self._allocate_block()
 

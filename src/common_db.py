@@ -17,7 +17,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 
 def data_path(name):
-    """拼接 data/ 目录下的文件路径。name 应为 str 类型。"""
+    """拼接 data/ 目录下的文件路径。name 可为 str 或 bytes 类型。"""
     if isinstance(name, bytes):
         name = name.decode('utf-8')
     return os.path.join(DATA_DIR, name)
@@ -38,19 +38,18 @@ VERBOSE = False              # True 时输出调试信息
 #  Returns:   tuple: (is_valid, converted_value(str), error_message)
 # ----------------------------------------------------------------------------------------
 def validate_and_convert_value(value, field_type, max_length):
-    # Check length constraint
-    if len(value) > max_length:
-        return False, None, f"Error: Input length exceeds maximum length {max_length}"
-
     try:
-        # Type conversion based on field type
         if field_type == 2:  # Integer type
             converted = int(value)
+            if len(value) > max_length:
+                return False, None, f"Error: Input length exceeds maximum length {max_length}"
         elif field_type == 3:  # Boolean type
             if value.lower() not in ['true', 'false', '1', '0']:
                 return False, None, "Error: Please enter true/false or 1/0"
             converted = bool(int(value)) if value in ['1', '0'] else value.lower() == 'true'
         else:  # String types (0 and 1)
+            if len(value) > max_length:
+                return False, None, f"Error: Input length exceeds maximum length {max_length}"
             converted = value
 
         return True, str(converted), None
