@@ -176,3 +176,24 @@ class TestPerFieldIndexFiles:
         results = name_idx2.search_index('Alice')
         name_idx2.close()
         assert results == [(1, 0)]
+
+
+def test_create_index_handles_duplicate_positions(isolated_data_dir, monkeypatch):
+    """触发"position 元组重复"路径——验证 enumerate 修复。"""
+    from src import index_db, storage_db
+    monkeypatch.setattr(index_db, 'MAX_NUM_OF_KEYS', 5)
+    sto = storage_db.Storage.create_table(
+        't',
+        [('name', 0, 10), ('age', 2, 4)],
+    )
+    sto.insert_record(['Alice', '20'])
+    sto.insert_record(['Alice', '20'])  # 完全相同的字段值
+    sto.insert_record(['Bob', '21'])
+    del sto
+
+    idx = index_db.Index('t', 'name')
+    idx.create_index()
+    results = idx.search_index('Alice')
+    idx.close()
+    assert len(results) == 2
+    assert len(set(results)) == 2
