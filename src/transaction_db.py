@@ -312,26 +312,34 @@ class TransactionManager:
         
         committed_txns = set()
         active_txns = set()
+        max_seen_id = 0
         
-        self.after_image_file.seek(0)
-        while True:
-            entry = self._read_log_entry(self.after_image_file)
-            if entry is None:
-                break
-            entry_type, entry_data = entry
-            if entry_type == LOG_RECORD_STATUS:
+        for log_file in (self.after_image_file, self.before_image_file):
+            log_file.seek(0)
+            while True:
+                entry = self._read_log_entry(log_file)
+                if entry is None:
+                    break
+                entry_type, entry_data = entry
                 txn_id = entry_data['txn_id']
-                status = entry_data['status']
-                if status == TRANSACTION_COMMITTED:
-                    committed_txns.add(txn_id)
-                    if txn_id in active_txns:
-                        active_txns.remove(txn_id)
-                elif status == TRANSACTION_ACTIVE:
+                max_seen_id = max(max_seen_id, txn_id)
+                if entry_type == LOG_RECORD_STATUS:
+                    status = entry_data['status']
+                    if status == TRANSACTION_COMMITTED:
+                        committed_txns.add(txn_id)
+                        if txn_id in active_txns:
+                            active_txns.remove(txn_id)
+                    elif status == TRANSACTION_ACTIVE:
+                        if txn_id not in committed_txns:
+                            active_txns.add(txn_id)
+                elif entry_type == LOG_RECORD_IMAGE:
                     if txn_id not in committed_txns:
                         active_txns.add(txn_id)
         
+        self.next_txn_id = max_seen_id + 1
+        
         if common_db.VERBOSE:
-            print(f"分析阶段完成: 找到 {len(committed_txns)} 个已提交事务, {len(active_txns)} 个未完成事务")
+            print(f"分析阶段完成: 找到 {len(committed_txns)} 个已提交事务, {len(active_txns)} 个未完成事务, next_txn_id={self.next_txn_id}")
         
         for txn_id in committed_txns:
             self.committed_transactions[txn_id] = 'recovered'

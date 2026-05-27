@@ -466,3 +466,38 @@ def test_delete_record_data_blocks_written_before_header_update(isolated_data_di
     ]
     assert not block_writes_after_header, \
         f"删除后还有数据块写入：{block_writes_after_header}"
+
+
+def test_next_txn_id_persists_across_restart(isolated_data_dir):
+    """重启 TransactionManager 后 next_txn_id 不应回到 1。"""
+    from src import transaction_db
+
+    tm1 = transaction_db.TransactionManager()
+    txn_a = tm1.begin_transaction()
+    tm1.log_after_image(txn_a, 't', b'x', 0, 0)
+    tm1.commit_transaction(txn_a)
+
+    txn_b = tm1.begin_transaction()
+    tm1.log_after_image(txn_b, 't', b'y', 0, 0)
+    tm1.commit_transaction(txn_b)
+    last_id = txn_b
+    del tm1
+
+    tm2 = transaction_db.TransactionManager()
+    new_txn = tm2.begin_transaction()
+    assert new_txn > last_id, \
+        f"重启后 next_txn_id 必须大于历史最大值，但拿到 {new_txn} <= {last_id}"
+
+
+def test_recovery_finds_uncommitted_txn_with_only_before_image(isolated_data_dir):
+    """只写了 before-image 就崩溃的事务必须被恢复识别为 active。"""
+    from src import transaction_db
+
+    tm = transaction_db.TransactionManager()
+    txn = tm.begin_transaction()
+    tm.log_before_image(txn, 't', b'old', 0, 0)
+    del tm
+
+    tm2 = transaction_db.TransactionManager()
+    assert tm2.next_txn_id > txn, \
+        f"恢复后 next_txn_id ({tm2.next_txn_id}) 必须大于 leaked txn ({txn})"
