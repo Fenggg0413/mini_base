@@ -40,14 +40,11 @@ def _table_file_exists(table_name):
 
 
 def _resolve_table_name(table_name):
-    if _table_file_exists(table_name):
-        return table_name
-
-    expected = table_name.lower() + '.dat'
-    for filename in os.listdir(common_db.DATA_DIR):
-        if filename.lower() == expected:
-            return filename[:-4]
-    raise SqlExecutionError("Table '%s' does not exist" % table_name)
+    schema_obj = _get_schema()
+    resolved = schema_obj.resolve_table_name(table_name)
+    if resolved is None:
+        raise SqlExecutionError("Table '%s' does not exist" % table_name)
+    return resolved
 
 
 def _scan_table(table_name):
@@ -594,38 +591,15 @@ def execute_update(ast):
         del storage
         return 0
 
-    # Strategy: delete table data, recreate, and re-insert with modifications
-    # This avoids the over-update bug with storage.update_record() and
-    # handles all WHERE condition types correctly (not just equality).
-    updated_records = []
-    for i, record in enumerate(records):
-        rec_list = list(record)
-        if i in set(matching_indices):
-            for fidx, new_val in update_pairs:
-                rec_list[fidx] = new_val
-        updated_records.append(tuple(rec_list))
+    txn_id = common_db.current_transaction_id
+    total_updated = 0
+    for fidx, new_val in update_pairs:
+        updated = storage.update_records_by_indices(
+            matching_indices, fidx, new_val, txn_id=txn_id,
+        )
+        total_updated = max(total_updated, updated)
 
-    # Delete all data and recreate
-    storage.delete_table_data(table_name)
-    new_storage = storage_db.Storage.create_table(table_name, field_list)
-
-    for record in updated_records:
-        value_strings = []
-        for j, (fn, ft, fl) in enumerate(field_list):
-            val = record[j]
-            if ft == 2:
-                value_strings.append(str(int(val)))
-            elif ft == 3:
-                value_strings.append('true' if val else 'false')
-            else:
-                if isinstance(val, bytes):
-                    val = val.decode('utf-8').strip()
-                value_strings.append(str(val).strip() if isinstance(val, str) else str(val).strip())
-        new_storage.insert_record(value_strings, txn_id=None)
-
-    total_updated = len(matching_indices)
     print("%d row(s) updated." % total_updated)
-    del new_storage
     del storage
     return total_updated
 
@@ -700,38 +674,19 @@ def execute_delete(ast):
             del storage
             return deleted_count
 
-    # Complex conditions — delete all + re-insert non-matching
     records = storage.getRecord()
-    non_matching = []
-    for record in records:
+    matching_indices = []
+    for i, record in enumerate(records):
         row = {}
         for j, (fn, ft, _fl) in enumerate(field_list):
             fn_clean = fn.strip().lower() if isinstance(fn, str) else fn.strip().decode('utf-8').lower()
             row[(table_norm, fn_clean)] = record[j]
-        if not _eval_condition(conditions, row, context):
-            non_matching.append(record)
+        if _eval_condition(conditions, row, context):
+            matching_indices.append(i)
 
-    deleted_count = len(records) - len(non_matching)
-
-    # Delete all data and recreate
-    storage.delete_table_data(table_name)
-    new_storage = storage_db.Storage.create_table(table_name, field_list)
-    for record in non_matching:
-        value_strings = []
-        for j, (fn, ft, fl) in enumerate(field_list):
-            val = record[j]
-            if ft == 2:
-                value_strings.append(str(int(val)))
-            elif ft == 3:
-                value_strings.append('true' if val else 'false')
-            else:
-                if isinstance(val, bytes):
-                    val = val.decode('utf-8').strip()
-                value_strings.append(str(val).strip() if isinstance(val, str) else str(val).strip())
-        new_storage.insert_record(value_strings, txn_id=None)
-
+    txn_id = common_db.current_transaction_id
+    deleted_count = storage.delete_records_by_indices(matching_indices, txn_id=txn_id)
     print("%d row(s) deleted." % deleted_count)
-    del new_storage
     del storage
     return deleted_count
 
@@ -811,9 +766,10 @@ def execute_rollback():
     if common_db.current_transaction_id is None:
         raise SqlExecutionError("No active transaction to ROLLBACK")
     txn_manager = transaction_db.get_transaction_manager()
-    txn_manager.abort_transaction(common_db.current_transaction_id)
-    print("ROLLBACK TRANSACTION %d" % common_db.current_transaction_id)
     txn_id = common_db.current_transaction_id
+    txn_manager.abort_transaction(txn_id)
+    txn_manager._undo_uncommitted_transactions({txn_id})
+    print("ROLLBACK TRANSACTION %d" % txn_id)
     common_db.current_transaction_id = None
     return txn_id
 

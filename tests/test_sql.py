@@ -475,3 +475,19 @@ def test_get_schema_falls_back_to_new_instance(isolated_data_dir):
     common_db.shared_schema = None
     s = query_plan_db._get_schema()
     assert isinstance(s, schema_db.Schema)
+
+
+def test_table_name_resolution_consistent_between_schema_and_query(isolated_data_dir):
+    from src import query_plan_db, schema_db, common_db
+    query_plan_db.execute_sql("CREATE TABLE Students (name str(10));")
+    schema = schema_db.Schema()
+    common_db.shared_schema = schema
+
+    found_by_schema = schema.find_table('students')
+    try:
+        resolved = query_plan_db._resolve_table_name('students')
+        ok_resolve = True
+    except query_plan_db.SqlExecutionError:
+        resolved = None
+        ok_resolve = False
+    assert found_by_schema == ok_resolve

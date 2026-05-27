@@ -392,9 +392,19 @@ class Schema(object):
         table_names = [x[0].strip().decode('utf-8') if isinstance(x[0], bytes) else x[0].strip() for x in self.headObj.tableNames]
         return table_name.strip() in table_names
 
+    def resolve_table_name(self, name):
+        name = name.strip()
+        for entry in self.headObj.tableNames:
+            stored = entry[0]
+            if isinstance(stored, bytes):
+                stored = stored.strip().decode('utf-8')
+            else:
+                stored = stored.strip()
+            if stored == name:
+                return stored
+        return None
 
 
-        
     # ----------------------------------------------
     # to write the main memory information into the schema file
     # ------------------------------------------------
