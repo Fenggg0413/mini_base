@@ -323,7 +323,8 @@ def execute_sql(sql_str):
     lex_db.set_lex_handle()
     parser_db.set_handle()
 
-    ast = common_db.global_parser.parse(sql_str.strip(), lexer=common_db.global_lexer)
+    parser = parser_db.set_handle()
+    ast = parser.parse(sql_str.strip(), lexer=common_db.global_lexer)
     if ast is None:
         raise SqlExecutionError("Failed to parse SQL statement")
 

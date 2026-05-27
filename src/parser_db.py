@@ -381,7 +381,4 @@ def set_handle():
     global _parser_instance
     if _parser_instance is None:
         _parser_instance = yacc.yacc(write_tables=0, debug=False, start='Statement')
-    common_db.global_parser = _parser_instance
-    if common_db.global_parser is None:
-        if common_db.VERBOSE:
-            print('wrong when yacc object is created')
+    return _parser_instance

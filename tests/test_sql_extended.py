@@ -117,19 +117,19 @@ class TestTransactionParser:
         parser_db.set_handle()
 
     def test_begin(self):
-        ast = common_db.global_parser.parse("BEGIN")
+        ast = parser_db.set_handle().parse("BEGIN")
         assert ast['type'] == 'begin_transaction'
 
     def test_begin_transaction(self):
-        ast = common_db.global_parser.parse("BEGIN TRANSACTION")
+        ast = parser_db.set_handle().parse("BEGIN TRANSACTION")
         assert ast['type'] == 'begin_transaction'
 
     def test_commit(self):
-        ast = common_db.global_parser.parse("COMMIT")
+        ast = parser_db.set_handle().parse("COMMIT")
         assert ast['type'] == 'commit'
 
     def test_rollback(self):
-        ast = common_db.global_parser.parse("ROLLBACK")
+        ast = parser_db.set_handle().parse("ROLLBACK")
         assert ast['type'] == 'rollback'
 
 
@@ -141,13 +141,13 @@ class TestIndexParser:
         parser_db.set_handle()
 
     def test_create_index(self):
-        ast = common_db.global_parser.parse("CREATE INDEX ON student(age)")
+        ast = parser_db.set_handle().parse("CREATE INDEX ON student(age)")
         assert ast['type'] == 'create_index'
         assert ast['table'] == 'student'
         assert ast['field'] == 'age'
 
     def test_drop_index(self):
-        ast = common_db.global_parser.parse("DROP INDEX ON student(age)")
+        ast = parser_db.set_handle().parse("DROP INDEX ON student(age)")
         assert ast['type'] == 'drop_index'
         assert ast['table'] == 'student'
         assert ast['field'] == 'age'
@@ -161,21 +161,21 @@ class TestMetadataParser:
         parser_db.set_handle()
 
     def test_show_tables(self):
-        ast = common_db.global_parser.parse("SHOW TABLES")
+        ast = parser_db.set_handle().parse("SHOW TABLES")
         assert ast['type'] == 'show_tables'
 
     def test_show_indexes_all(self):
-        ast = common_db.global_parser.parse("SHOW INDEX")
+        ast = parser_db.set_handle().parse("SHOW INDEX")
         assert ast['type'] == 'show_indexes'
         assert ast['table'] is None
 
     def test_show_indexes_from_table(self):
-        ast = common_db.global_parser.parse("SHOW INDEX FROM student")
+        ast = parser_db.set_handle().parse("SHOW INDEX FROM student")
         assert ast['type'] == 'show_indexes'
         assert ast['table'] == 'student'
 
     def test_describe(self):
-        ast = common_db.global_parser.parse("DESCRIBE student")
+        ast = parser_db.set_handle().parse("DESCRIBE student")
         assert ast['type'] == 'describe'
         assert ast['table'] == 'student'
 
