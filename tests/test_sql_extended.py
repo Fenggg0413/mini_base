@@ -397,3 +397,36 @@ def test_log_image_truncates_long_table_name(isolated_data_dir):
     long_name = 'a' * 100
     tm.log_after_image(txn, long_name, b'dummy', 0, 0)
     tm.commit_transaction(txn)
+
+
+def test_insert_delete_max_record_num_consistent(isolated_data_dir):
+    """insert 和 delete 算出的 MAX_RECORD_NUM 必须一致。"""
+    from src import storage_db
+    sto = storage_db.Storage.create_table(
+        't',
+        [('a', 0, 100)],
+    )
+    record_head_len = 4 + 4 + 10
+    record_content_len = 100
+    record_len = record_head_len + record_content_len
+
+    max_insert = storage_db._max_records_per_block(record_len)
+    max_delete_via_helper = storage_db._max_records_per_block(record_len)
+    assert max_insert == max_delete_via_helper
+
+    for i in range(max_insert + 5):
+        sto.insert_record([f'v{i:02d}'])
+    del sto
+
+    sto2 = storage_db.Storage('t')
+    initial_count = len(sto2.record_list)
+    sto2.delete_record(0, 'v00')
+    del sto2
+
+    sto3 = storage_db.Storage('t')
+    assert len(sto3.record_list) == initial_count - 1
+    sto3.insert_record(['v99'])
+    del sto3
+
+    sto4 = storage_db.Storage('t')
+    assert len(sto4.record_list) == initial_count

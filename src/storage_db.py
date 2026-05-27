@@ -65,6 +65,11 @@ from . import common_db
 from . import index_catalog
 
 
+def _max_records_per_block(record_len):
+    from .common_db import BLOCK_SIZE
+    return (BLOCK_SIZE - struct.calcsize('!i') - struct.calcsize('!ii')) // (record_len + struct.calcsize('!i'))
+
+
 # --------------------------------------------
 # the class can store table data into files
 # functions include insert, delete and update
@@ -299,8 +304,7 @@ class Storage(object):
         record_content_len = len(inputstr)
         record_head_len = struct.calcsize('!ii10s')
         record_len = record_head_len + record_content_len
-        MAX_RECORD_NUM = int((BLOCK_SIZE - struct.calcsize('!i') - struct.calcsize('!ii')) / (
-                record_len + struct.calcsize('!i')))
+        MAX_RECORD_NUM = _max_records_per_block(record_len)
 
         # Step4: To calculate new record Position
         if not len(self.record_Position):
@@ -674,7 +678,7 @@ class Storage(object):
         record_len = record_head_len + record_content_len
         
         # Calculate the maximum number of records per block
-        MAX_RECORD_NUM = int((BLOCK_SIZE - struct.calcsize('!ii')) / (record_len + struct.calcsize('!i')))
+        MAX_RECORD_NUM = _max_records_per_block(record_len)
         
         # Recalculate record positions
         self.record_Position = []
