@@ -87,7 +87,7 @@ def _scan_table(table_name):
 def _index_scan_table(table_name, field_name, field_value):
     table_name_raw = _resolve_table_name(table_name)
 
-    idx = index_db.Index(table_name_raw)
+    idx = index_db.Index(table_name_raw, field_name)
     results = idx.search_index(field_value)
     idx.close()
 
@@ -846,9 +846,9 @@ def execute_create_index(ast):
     if field_name in indexed:
         raise SqlExecutionError("Index on '%s.%s' already exists" % (table_name, field_name))
 
-    idx = index_db.Index(table_name)
+    idx = index_db.Index(table_name, field_name)
     try:
-        ok = idx.create_index(field_name)
+        ok = idx.create_index()
     finally:
         idx.close()
     if ok:

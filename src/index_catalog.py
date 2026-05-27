@@ -115,7 +115,7 @@ def remove_index(table_name, field_name):
             for e in entries:
                 f.write(e)
 
-        ind_path = common_db.data_path(table_name.strip() + '.ind')
+        ind_path = common_db.data_path(f'{table_name.strip()}.{field_name.strip()}.ind')
         if os.path.exists(ind_path):
             os.remove(ind_path)
 

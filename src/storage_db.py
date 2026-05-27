@@ -419,6 +419,9 @@ class Storage(object):
         tableName = tableName.strip()
         if os.path.exists(common_db.data_path(tableName + '.dat')):
             os.remove(common_db.data_path(tableName + '.dat'))
+        import glob
+        for ind_path in glob.glob(common_db.data_path(f'{tableName}.*.ind')):
+            os.remove(ind_path)
 
         return True
 
@@ -567,7 +570,7 @@ class Storage(object):
         for indexed_field in indexed_fields:
             if indexed_field not in field_map:
                 continue
-            idx = _idx_mod.Index(self.tableName)
+            idx = _idx_mod.Index(self.tableName, indexed_field)
             fi, ftype = field_map[indexed_field]
             field_value = record[fi]
             if ftype == 2:
