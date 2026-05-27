@@ -15,7 +15,7 @@ Run from the project root directory. Starts a SQL REPL (mini_base> prompt). Crea
 ## Testing
 
 ```bash
-python3 -m pytest tests/ -v                       # full test suite (141 tests)
+python3 -m pytest tests/ -v                       # full test suite (193 tests)
 ```
 
 Key test files:
@@ -26,7 +26,7 @@ Key test files:
 | `tests/test_sql.py` | SQL parser + execution (CRUD, WHERE, ORDER BY) |
 | `tests/test_sql_extended.py` | Extended SQL (BEGIN/COMMIT/ROLLBACK, CREATE/DROP INDEX, SHOW/DESCRIBE, REPL) |
 
-The interactive scripts `tests/test_db.py` and `tests/test_transaction.py` call `input()` and will hang under pytest capture — mock `builtins.input` if you need to test them programmatically.
+The interactive script `tests/test_db.py` calls `input()` and will hang under pytest capture — mock `builtins.input` if you need to test it programmatically. Interactive transaction demos live in `tests/manual/` (excluded from pytest collection).
 
 ### Testing the index module
 
@@ -59,7 +59,7 @@ All runtime data lives in `data/`, resolved via `common_db.DATA_DIR` (an absolut
 |------|--------|---------|
 | `all.sch` | Binary, custom | Table schema definitions |
 | `*.dat` | Binary, 4KB-blocks | Table records (block 0 = header) |
-| `*.ind` | Binary, 4KB-blocks | B+ tree indexes (block 0 = meta) |
+| `*.ind` | Binary, 4KB-blocks | B+ tree indexes (block 0 = meta), named `<table>.<field>.ind` |
 | `before_image.log` | Binary | Transaction before-images |
 | `after_image.log` | Binary | Transaction after-images |
 
@@ -73,11 +73,9 @@ All runtime data lives in `data/`, resolved via `common_db.DATA_DIR` (an absolut
 
 1. **`Storage.__init__` calls `input()`** when a `.dat` file doesn't exist — it prompts for field count and names interactively. This makes it impossible to use in non-interactive contexts without mocking `builtins.input`.
 
-2. **Transaction recovery is incomplete**: `begin_transaction()` doesn't write ACTIVE status to the log, so crashed uncommitted transactions can't be reliably identified. `delete_record()` has no transaction logging at all. `insert_record()` logs only after-images (no before-images), so undo is incomplete.
+2. **Schema file `all.sch` is shared global state**: `Schema()` opens it exclusively. Tests that create/drop tables must clean up `data/all.sch` or use isolated temp directories.
 
-3. **Schema file `all.sch` is shared global state**: `Schema()` opens it exclusively. Tests that create/drop tables must clean up `data/all.sch` or use isolated temp directories.
-
-4. **`common_db.py:27` comment references `yacc_db`** — the actual module is `parser_db`. Stale comment, not a bug.
+3. **`common_db.py:27` comment references `yacc_db`** — the actual module is `parser_db`. Stale comment, not a bug.
 
 ## Conventions
 
