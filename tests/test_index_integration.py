@@ -78,7 +78,7 @@ class TestIndexCatalog:
 class TestDeleteIndexEntry:
     @pytest.fixture
     def idx(self, tmp_data):
-        index = index_db.Index('test_del')
+        index = index_db.Index('test_del', 'key')
         yield index
         if getattr(index, 'f_handle', None) and getattr(index, 'open', False):
             index.f_handle.close()
@@ -117,7 +117,7 @@ class TestDeleteIndexEntry:
     def idx_small(self, tmp_path, monkeypatch):
         monkeypatch.setattr(common_db, 'DATA_DIR', str(tmp_path))
         monkeypatch.setattr(index_db, 'MAX_NUM_OF_KEYS', 5)
-        index = index_db.Index('test_del_small')
+        index = index_db.Index('test_del_small', 'key')
         yield index
         if getattr(index, 'f_handle', None) and getattr(index, 'open', False):
             index.f_handle.close()
@@ -130,3 +130,70 @@ class TestDeleteIndexEntry:
         assert idx_small.delete_index_entry('c', 3, 2) is True
         assert idx_small.search_index('c') == []
         assert (1, 0) in idx_small.search_index('a')
+
+
+# ─── Per-field .ind file isolation ─────────────────────────────────────
+
+class TestPerFieldIndexFiles:
+    def test_two_indexes_on_same_table_use_separate_files(self, tmp_data):
+        """同一张表的两个字段索引必须落到不同 .ind 文件。"""
+        idx_a = index_db.Index('students', 'name')
+        idx_a.insert_index_entry('Alice', 1, 0)
+        idx_a.close()
+
+        idx_b = index_db.Index('students', 'age')
+        idx_b.insert_index_entry('20', 1, 0)
+        idx_b.close()
+
+        assert os.path.exists(common_db.data_path('students.name.ind'))
+        assert os.path.exists(common_db.data_path('students.age.ind'))
+        assert not os.path.exists(common_db.data_path('students.ind'))
+
+    def test_drop_one_index_keeps_the_other(self, tmp_data, fresh_catalog):
+        """删一个字段索引不能删掉同表另一字段的索引文件。"""
+        for field in ('name', 'age'):
+            idx = index_db.Index('students', field)
+            idx.insert_index_entry('x', 1, 0)
+            idx.close()
+            index_catalog.add_index('students', field)
+
+        index_catalog.remove_index('students', 'name')
+
+        assert not os.path.exists(common_db.data_path('students.name.ind'))
+        assert os.path.exists(common_db.data_path('students.age.ind'))
+
+    def test_search_returns_only_matching_field_records(self, tmp_data):
+        """跨字段索引不应该串扰：搜 name='Alice' 不该返回 age 索引里同 key 的项。"""
+        name_idx = index_db.Index('students', 'name')
+        name_idx.insert_index_entry('Alice', 1, 0)
+        name_idx.close()
+
+        age_idx = index_db.Index('students', 'age')
+        age_idx.insert_index_entry('Alice', 99, 99)
+        age_idx.close()
+
+        name_idx2 = index_db.Index('students', 'name')
+        results = name_idx2.search_index('Alice')
+        name_idx2.close()
+        assert results == [(1, 0)]
+
+
+def test_create_index_handles_duplicate_positions(isolated_data_dir, monkeypatch):
+    """触发"position 元组重复"路径——验证 enumerate 修复。"""
+    from src import index_db, storage_db
+    monkeypatch.setattr(index_db, 'MAX_NUM_OF_KEYS', 5)
+    sto = storage_db.Storage.create_table(
+        't',
+        [('name', 0, 10), ('age', 2, 4)],
+    )
+    sto.insert_record(['Alice', '20'])
+    sto.insert_record(['Alice', '20'])  # 完全相同的字段值
+    sto.insert_record(['Bob', '21'])
+    del sto
+
+    idx = index_db.Index('t', 'name')
+    idx.create_index()
+    results = idx.search_index('Alice')
+    idx.close()
+    assert len(results) == 2
+    assert len(set(results)) == 2

@@ -36,7 +36,7 @@ def fmt_key(key, length=10):
 def fresh_index(tmp_path, monkeypatch):
     """Create a fresh Index on a temporary directory; clean up after test."""
     monkeypatch.setattr(common_db, 'DATA_DIR', str(tmp_path))
-    idx = index_db.Index('test_idx')
+    idx = index_db.Index('test_idx', 'key')
     yield idx
     if getattr(idx, 'f_handle', None) and getattr(idx, 'open', False):
         idx.f_handle.close()
@@ -155,11 +155,11 @@ class TestIndexFirstInsert:
 
     def test_insert_creates_ind_file(self, fresh_index, tmp_path):
         fresh_index.insert_index_entry('a', 1, 0)
-        assert (tmp_path / 'test_idx.ind').exists()
+        assert (tmp_path / 'test_idx.key.ind').exists()
 
     def test_meta_block_after_first_insert(self, fresh_index, tmp_path):
         fresh_index.insert_index_entry('a', 1, 0)
-        with open(tmp_path / 'test_idx.ind', 'rb') as f:
+        with open(tmp_path / 'test_idx.key.ind', 'rb') as f:
             meta = f.read(BLOCK_SIZE)
         _, has_root, num_levels, root_ptr = struct.unpack_from('!i?ii', meta, 0)
         assert has_root is True
@@ -168,7 +168,7 @@ class TestIndexFirstInsert:
 
     def test_leaf_block_after_first_insert(self, fresh_index, tmp_path):
         fresh_index.insert_index_entry('hello', 5, 3)
-        with open(tmp_path / 'test_idx.ind', 'rb') as f:
+        with open(tmp_path / 'test_idx.key.ind', 'rb') as f:
             f.seek(BLOCK_SIZE)
             leaf = f.read(BLOCK_SIZE)
         block_id, node_type, num_keys = struct.unpack_from('!iii', leaf, 0)
@@ -229,7 +229,7 @@ class TestIndexMultipleInserts:
         """The last_ptr of the single leaf should still be SPECIAL_INDEX_BLOCK_PTR."""
         fresh_index.insert_index_entry('a', 1, 0)
         fresh_index.insert_index_entry('b', 2, 0)
-        with open(tmp_path / 'test_idx.ind', 'rb') as f:
+        with open(tmp_path / 'test_idx.key.ind', 'rb') as f:
             f.seek(BLOCK_SIZE)
             leaf = f.read(BLOCK_SIZE)
         last_ptr, = struct.unpack_from('!i', leaf, BLOCK_SIZE - 4)
@@ -239,7 +239,7 @@ class TestIndexMultipleInserts:
         """Keys inside the leaf must be in sorted order regardless of insert order."""
         for ch in ['e', 'c', 'a', 'd', 'b']:
             fresh_index.insert_index_entry(ch, ord(ch), 0)
-        with open(tmp_path / 'test_idx.ind', 'rb') as f:
+        with open(tmp_path / 'test_idx.key.ind', 'rb') as f:
             f.seek(BLOCK_SIZE)
             leaf = f.read(BLOCK_SIZE)
         _, _, num_keys = struct.unpack_from('!iii', leaf, 0)
@@ -264,7 +264,7 @@ class TestIndexLeafSplit:
     @pytest.fixture
     def idx(self, tmp_path, monkeypatch):
         monkeypatch.setattr(common_db, 'DATA_DIR', str(tmp_path))
-        index = index_db.Index('test_split')
+        index = index_db.Index('test_split', 'key')
         yield index
         if getattr(index, 'f_handle', None) and getattr(index, 'open', False):
             index.f_handle.close()
@@ -291,7 +291,7 @@ class TestIndexLeafSplit:
         """After leaf split the root must be an internal node."""
         for i in range(6):
             idx.insert_index_entry(chr(ord('a') + i), i + 1, i)
-        with open(tmp_path / 'test_split.ind', 'rb') as f:
+        with open(tmp_path / 'test_split.key.ind', 'rb') as f:
             all_data = f.read()
         meta_bytes = all_data[:BLOCK_SIZE]
         _, has_root, _, root_ptr = struct.unpack_from('!i?ii', meta_bytes, 0)
@@ -304,7 +304,7 @@ class TestIndexLeafSplit:
         """All but the last leaf should have a valid next-pointer; last leaf → -1."""
         for i in range(8):
             idx.insert_index_entry(chr(ord('a') + i), i + 1, i)
-        with open(tmp_path / 'test_split.ind', 'rb') as f:
+        with open(tmp_path / 'test_split.key.ind', 'rb') as f:
             all_data = f.read()
         meta = all_data[:BLOCK_SIZE]
         _, _, _, root_ptr = struct.unpack_from('!i?ii', meta, 0)
@@ -340,7 +340,7 @@ class TestIndexMultiLevel:
     @pytest.fixture
     def idx(self, tmp_path, monkeypatch):
         monkeypatch.setattr(common_db, 'DATA_DIR', str(tmp_path))
-        index = index_db.Index('test_multi')
+        index = index_db.Index('test_multi', 'key')
         yield index
         if getattr(index, 'f_handle', None) and getattr(index, 'open', False):
             index.f_handle.close()
@@ -389,7 +389,7 @@ class TestSearchIndex:
     @pytest.fixture
     def idx(self, tmp_path, monkeypatch):
         monkeypatch.setattr(common_db, 'DATA_DIR', str(tmp_path))
-        index = index_db.Index('test_search')
+        index = index_db.Index('test_search', 'key')
         yield index
         if getattr(index, 'f_handle', None) and getattr(index, 'open', False):
             index.f_handle.close()
@@ -466,11 +466,11 @@ class TestCreateIndex:
         from src import schema_db, storage_db
         monkeypatch.setattr(common_db, 'DATA_DIR', str(table_with_data))
         # Remove any existing .ind file
-        ind_path = table_with_data / 'student.ind'
+        ind_path = table_with_data / 'student.sid.ind'
         if ind_path.exists():
             os.remove(ind_path)
-        idx = index_db.Index('student')
-        idx.create_index('sid')
+        idx = index_db.Index('student', 'sid')
+        idx.create_index()
         r = idx.search_index('s001')
         assert len(r) > 0, "create_index should produce searchable entries"
         if getattr(idx, 'f_handle', None) and getattr(idx, 'open', False):

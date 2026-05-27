@@ -198,7 +198,7 @@ class Schema(object):
             if common_db.VERBOSE:
                 print ("offset of body in schema  file is ", tempOffset)
 
-            Schema.body_begin_index = tempOffset
+            self.body_begin_index = tempOffset
             nameList=[]
             fieldsList={}
              # it is a dictionary
@@ -297,7 +297,7 @@ class Schema(object):
     # delete all the contents in the schema file
     # ----------------------------------------
     def deleteAll(self):
-        self.headObj.tableFields=[]
+        self.headObj.tableFields = {}
         self.headObj.tableNames=[]
         self.fileObj.seek(0)
         self.fileObj.truncate(0)
@@ -392,9 +392,19 @@ class Schema(object):
         table_names = [x[0].strip().decode('utf-8') if isinstance(x[0], bytes) else x[0].strip() for x in self.headObj.tableNames]
         return table_name.strip() in table_names
 
+    def resolve_table_name(self, name):
+        name = name.strip()
+        for entry in self.headObj.tableNames:
+            stored = entry[0]
+            if isinstance(stored, bytes):
+                stored = stored.strip().decode('utf-8')
+            else:
+                stored = stored.strip()
+            if stored == name:
+                return stored
+        return None
 
 
-        
     # ----------------------------------------------
     # to write the main memory information into the schema file
     # ------------------------------------------------

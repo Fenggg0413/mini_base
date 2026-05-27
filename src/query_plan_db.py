@@ -17,6 +17,14 @@ class SqlExecutionError(Exception):
     pass
 
 
+def _get_schema():
+    """返回共享 Schema 实例；shared_schema 未初始化时回退到新建。"""
+    from . import schema_db
+    if common_db.shared_schema is not None:
+        return common_db.shared_schema
+    return schema_db.Schema()
+
+
 def _norm(name):
     return name.lower()
 
@@ -32,14 +40,11 @@ def _table_file_exists(table_name):
 
 
 def _resolve_table_name(table_name):
-    if _table_file_exists(table_name):
-        return table_name
-
-    expected = table_name.lower() + '.dat'
-    for filename in os.listdir(common_db.DATA_DIR):
-        if filename.lower() == expected:
-            return filename[:-4]
-    raise SqlExecutionError("Table '%s' does not exist" % table_name)
+    schema_obj = _get_schema()
+    resolved = schema_obj.resolve_table_name(table_name)
+    if resolved is None:
+        raise SqlExecutionError("Table '%s' does not exist" % table_name)
+    return resolved
 
 
 def _scan_table(table_name):
@@ -79,7 +84,7 @@ def _scan_table(table_name):
 def _index_scan_table(table_name, field_name, field_value):
     table_name_raw = _resolve_table_name(table_name)
 
-    idx = index_db.Index(table_name_raw)
+    idx = index_db.Index(table_name_raw, field_name)
     results = idx.search_index(field_value)
     idx.close()
 
@@ -323,7 +328,8 @@ def execute_sql(sql_str):
     lex_db.set_lex_handle()
     parser_db.set_handle()
 
-    ast = common_db.global_parser.parse(sql_str.strip(), lexer=common_db.global_lexer)
+    parser = parser_db.set_handle()
+    ast = parser.parse(sql_str.strip(), lexer=common_db.global_lexer)
     if ast is None:
         raise SqlExecutionError("Failed to parse SQL statement")
 
@@ -362,8 +368,6 @@ def execute_sql(sql_str):
 
 def execute_select(ast):
     """Execute a SELECT statement with enhanced WHERE and ORDER BY."""
-    from . import schema_db
-
     tables = ast['tables']
     conditions = ast.get('where', [])
     order_by = ast.get('order_by', [])
@@ -456,15 +460,11 @@ def execute_select(ast):
 
 def execute_insert(ast):
     """Execute an INSERT statement."""
-    from . import schema_db
-
     table_name = ast['table'].strip()
     columns = ast.get('columns')
     values = ast['values']
 
-    schema_obj = common_db.shared_schema
-    if schema_obj is None:
-        schema_obj = schema_db.Schema()
+    schema_obj = _get_schema()
     if not schema_obj.find_table(table_name):
         raise SqlExecutionError("Table '%s' does not exist" % table_name)
 
@@ -522,15 +522,11 @@ def execute_insert(ast):
 
 def execute_update(ast):
     """Execute an UPDATE statement."""
-    from . import schema_db
-
     table_name = ast['table'].strip()
     assignments = ast['assignments']
     conditions = ast.get('where', [])
 
-    schema_obj = common_db.shared_schema
-    if schema_obj is None:
-        schema_obj = schema_db.Schema()
+    schema_obj = _get_schema()
     if not schema_obj.find_table(table_name):
         raise SqlExecutionError("Table '%s' does not exist" % table_name)
 
@@ -595,52 +591,25 @@ def execute_update(ast):
         del storage
         return 0
 
-    # Strategy: delete table data, recreate, and re-insert with modifications
-    # This avoids the over-update bug with storage.update_record() and
-    # handles all WHERE condition types correctly (not just equality).
-    updated_records = []
-    for i, record in enumerate(records):
-        rec_list = list(record)
-        if i in set(matching_indices):
-            for fidx, new_val in update_pairs:
-                rec_list[fidx] = new_val
-        updated_records.append(tuple(rec_list))
+    txn_id = common_db.current_transaction_id
+    total_updated = 0
+    for fidx, new_val in update_pairs:
+        updated = storage.update_records_by_indices(
+            matching_indices, fidx, new_val, txn_id=txn_id,
+        )
+        total_updated = max(total_updated, updated)
 
-    # Delete all data and recreate
-    storage.delete_table_data(table_name)
-    new_storage = storage_db.Storage.create_table(table_name, field_list)
-
-    for record in updated_records:
-        value_strings = []
-        for j, (fn, ft, fl) in enumerate(field_list):
-            val = record[j]
-            if ft == 2:
-                value_strings.append(str(int(val)))
-            elif ft == 3:
-                value_strings.append('true' if val else 'false')
-            else:
-                if isinstance(val, bytes):
-                    val = val.decode('utf-8').strip()
-                value_strings.append(str(val).strip() if isinstance(val, str) else str(val).strip())
-        new_storage.insert_record(value_strings, txn_id=None)
-
-    total_updated = len(matching_indices)
     print("%d row(s) updated." % total_updated)
-    del new_storage
     del storage
     return total_updated
 
 
 def execute_delete(ast):
     """Execute a DELETE statement."""
-    from . import schema_db
-
     table_name = ast['table'].strip()
     conditions = ast.get('where', [])
 
-    schema_obj = common_db.shared_schema
-    if schema_obj is None:
-        schema_obj = schema_db.Schema()
+    schema_obj = _get_schema()
     if not schema_obj.find_table(table_name):
         raise SqlExecutionError("Table '%s' does not exist" % table_name)
 
@@ -705,46 +674,25 @@ def execute_delete(ast):
             del storage
             return deleted_count
 
-    # Complex conditions — delete all + re-insert non-matching
     records = storage.getRecord()
-    non_matching = []
-    for record in records:
+    matching_indices = []
+    for i, record in enumerate(records):
         row = {}
         for j, (fn, ft, _fl) in enumerate(field_list):
             fn_clean = fn.strip().lower() if isinstance(fn, str) else fn.strip().decode('utf-8').lower()
             row[(table_norm, fn_clean)] = record[j]
-        if not _eval_condition(conditions, row, context):
-            non_matching.append(record)
+        if _eval_condition(conditions, row, context):
+            matching_indices.append(i)
 
-    deleted_count = len(records) - len(non_matching)
-
-    # Delete all data and recreate
-    storage.delete_table_data(table_name)
-    new_storage = storage_db.Storage.create_table(table_name, field_list)
-    for record in non_matching:
-        value_strings = []
-        for j, (fn, ft, fl) in enumerate(field_list):
-            val = record[j]
-            if ft == 2:
-                value_strings.append(str(int(val)))
-            elif ft == 3:
-                value_strings.append('true' if val else 'false')
-            else:
-                if isinstance(val, bytes):
-                    val = val.decode('utf-8').strip()
-                value_strings.append(str(val).strip() if isinstance(val, str) else str(val).strip())
-        new_storage.insert_record(value_strings, txn_id=None)
-
+    txn_id = common_db.current_transaction_id
+    deleted_count = storage.delete_records_by_indices(matching_indices, txn_id=txn_id)
     print("%d row(s) deleted." % deleted_count)
-    del new_storage
     del storage
     return deleted_count
 
 
 def execute_create_table(ast):
     """Execute a CREATE TABLE statement."""
-    from . import schema_db
-
     table_name = ast['table'].strip()
     fields = ast['fields']
 
@@ -756,9 +704,7 @@ def execute_create_table(ast):
         if len(fname) > 10:
             raise SqlExecutionError("Field name '%s' exceeds maximum length of 10" % fname)
 
-    schema_obj = common_db.shared_schema
-    if schema_obj is None:
-        schema_obj = schema_db.Schema()
+    schema_obj = _get_schema()
     if schema_obj.find_table(table_name):
         raise SqlExecutionError("Table '%s' already exists" % table_name)
 
@@ -774,13 +720,9 @@ def execute_create_table(ast):
 
 def execute_drop_table(ast):
     """Execute a DROP TABLE statement."""
-    from . import schema_db
-
     table_name = ast['table'].strip()
 
-    schema_obj = common_db.shared_schema
-    if schema_obj is None:
-        schema_obj = schema_db.Schema()
+    schema_obj = _get_schema()
     if not schema_obj.find_table(table_name):
         raise SqlExecutionError("Table '%s' does not exist" % table_name)
 
@@ -824,22 +766,19 @@ def execute_rollback():
     if common_db.current_transaction_id is None:
         raise SqlExecutionError("No active transaction to ROLLBACK")
     txn_manager = transaction_db.get_transaction_manager()
-    txn_manager.abort_transaction(common_db.current_transaction_id)
-    print("ROLLBACK TRANSACTION %d" % common_db.current_transaction_id)
     txn_id = common_db.current_transaction_id
+    txn_manager.abort_transaction(txn_id)
+    txn_manager._undo_uncommitted_transactions({txn_id})
+    print("ROLLBACK TRANSACTION %d" % txn_id)
     common_db.current_transaction_id = None
     return txn_id
 
 
 def execute_create_index(ast):
-    from . import schema_db
-
     table_name = ast['table'].strip()
     field_name = ast['field'].strip()
 
-    schema_obj = common_db.shared_schema
-    if schema_obj is None:
-        schema_obj = schema_db.Schema()
+    schema_obj = _get_schema()
     if not schema_obj.find_table(table_name):
         raise SqlExecutionError("Table '%s' does not exist" % table_name)
 
@@ -863,9 +802,9 @@ def execute_create_index(ast):
     if field_name in indexed:
         raise SqlExecutionError("Index on '%s.%s' already exists" % (table_name, field_name))
 
-    idx = index_db.Index(table_name)
+    idx = index_db.Index(table_name, field_name)
     try:
-        ok = idx.create_index(field_name)
+        ok = idx.create_index()
     finally:
         idx.close()
     if ok:
@@ -887,11 +826,7 @@ def execute_drop_index(ast):
 
 
 def execute_show_tables():
-    from . import schema_db
-
-    schema_obj = common_db.shared_schema
-    if schema_obj is None:
-        schema_obj = schema_db.Schema()
+    schema_obj = _get_schema()
     tables = schema_obj.get_table_name_list()
     if not tables:
         print("No tables found.")
@@ -927,12 +862,8 @@ def execute_show_indexes(ast):
 
 
 def execute_describe(ast):
-    from . import schema_db
-
     table_name = ast['table'].strip()
-    schema_obj = common_db.shared_schema
-    if schema_obj is None:
-        schema_obj = schema_db.Schema()
+    schema_obj = _get_schema()
     if not schema_obj.find_table(table_name):
         raise SqlExecutionError("Table '%s' does not exist" % table_name)
 

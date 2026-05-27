@@ -117,19 +117,19 @@ class TestTransactionParser:
         parser_db.set_handle()
 
     def test_begin(self):
-        ast = common_db.global_parser.parse("BEGIN")
+        ast = parser_db.set_handle().parse("BEGIN")
         assert ast['type'] == 'begin_transaction'
 
     def test_begin_transaction(self):
-        ast = common_db.global_parser.parse("BEGIN TRANSACTION")
+        ast = parser_db.set_handle().parse("BEGIN TRANSACTION")
         assert ast['type'] == 'begin_transaction'
 
     def test_commit(self):
-        ast = common_db.global_parser.parse("COMMIT")
+        ast = parser_db.set_handle().parse("COMMIT")
         assert ast['type'] == 'commit'
 
     def test_rollback(self):
-        ast = common_db.global_parser.parse("ROLLBACK")
+        ast = parser_db.set_handle().parse("ROLLBACK")
         assert ast['type'] == 'rollback'
 
 
@@ -141,13 +141,13 @@ class TestIndexParser:
         parser_db.set_handle()
 
     def test_create_index(self):
-        ast = common_db.global_parser.parse("CREATE INDEX ON student(age)")
+        ast = parser_db.set_handle().parse("CREATE INDEX ON student(age)")
         assert ast['type'] == 'create_index'
         assert ast['table'] == 'student'
         assert ast['field'] == 'age'
 
     def test_drop_index(self):
-        ast = common_db.global_parser.parse("DROP INDEX ON student(age)")
+        ast = parser_db.set_handle().parse("DROP INDEX ON student(age)")
         assert ast['type'] == 'drop_index'
         assert ast['table'] == 'student'
         assert ast['field'] == 'age'
@@ -161,21 +161,21 @@ class TestMetadataParser:
         parser_db.set_handle()
 
     def test_show_tables(self):
-        ast = common_db.global_parser.parse("SHOW TABLES")
+        ast = parser_db.set_handle().parse("SHOW TABLES")
         assert ast['type'] == 'show_tables'
 
     def test_show_indexes_all(self):
-        ast = common_db.global_parser.parse("SHOW INDEX")
+        ast = parser_db.set_handle().parse("SHOW INDEX")
         assert ast['type'] == 'show_indexes'
         assert ast['table'] is None
 
     def test_show_indexes_from_table(self):
-        ast = common_db.global_parser.parse("SHOW INDEX FROM student")
+        ast = parser_db.set_handle().parse("SHOW INDEX FROM student")
         assert ast['type'] == 'show_indexes'
         assert ast['table'] == 'student'
 
     def test_describe(self):
-        ast = common_db.global_parser.parse("DESCRIBE student")
+        ast = parser_db.set_handle().parse("DESCRIBE student")
         assert ast['type'] == 'describe'
         assert ast['table'] == 'student'
 
@@ -387,3 +387,286 @@ class TestEndToEndSQL:
         result = query_plan_db.execute_sql("SHOW TABLES")
         assert 't1' in result
         assert 't2' in result
+
+
+def test_log_image_truncates_long_table_name(isolated_data_dir):
+    """log_image 对超长表名应截断而非抛异常。"""
+    from src import transaction_db
+    tm = transaction_db.TransactionManager()
+    txn = tm.begin_transaction()
+    long_name = 'a' * 100
+    tm.log_after_image(txn, long_name, b'dummy', 0, 0)
+    tm.commit_transaction(txn)
+
+
+def test_insert_delete_max_record_num_consistent(isolated_data_dir):
+    """insert 和 delete 算出的 MAX_RECORD_NUM 必须一致。"""
+    from src import storage_db
+    sto = storage_db.Storage.create_table(
+        't',
+        [('a', 0, 100)],
+    )
+    record_head_len = 4 + 4 + 10
+    record_content_len = 100
+    record_len = record_head_len + record_content_len
+
+    max_insert = storage_db._max_records_per_block(record_len)
+    max_delete_via_helper = storage_db._max_records_per_block(record_len)
+    assert max_insert == max_delete_via_helper
+
+    for i in range(max_insert + 5):
+        sto.insert_record([f'v{i:02d}'])
+    del sto
+
+    sto2 = storage_db.Storage('t')
+    initial_count = len(sto2.record_list)
+    sto2.delete_record(0, 'v00')
+    del sto2
+
+    sto3 = storage_db.Storage('t')
+    assert len(sto3.record_list) == initial_count - 1
+    sto3.insert_record(['v99'])
+    del sto3
+
+    sto4 = storage_db.Storage('t')
+    assert len(sto4.record_list) == initial_count
+
+
+def test_delete_record_data_blocks_written_before_header_update(isolated_data_dir, monkeypatch):
+    """模拟在写完文件头但未写完数据块时崩溃。"""
+    from src import storage_db
+    sto = storage_db.Storage.create_table('t', [('a', 2, 4)])
+    for i in range(20):
+        sto.insert_record([str(i)])
+    del sto
+
+    sto = storage_db.Storage('t')
+
+    write_log = []
+    orig_seek = sto.f_handle.seek
+    orig_write = sto.f_handle.write
+    current_offset = [0]
+
+    def tracked_seek(off, *a, **kw):
+        current_offset[0] = off
+        return orig_seek(off, *a, **kw)
+
+    def tracked_write(data):
+        write_log.append(current_offset[0])
+        return orig_write(data)
+
+    monkeypatch.setattr(sto.f_handle, 'seek', tracked_seek)
+    monkeypatch.setattr(sto.f_handle, 'write', tracked_write)
+
+    sto.delete_record(0, '5')
+
+    last_header_write = max(i for i, off in enumerate(write_log) if off == 0)
+    block_writes_after_header = [
+        off for off in write_log[last_header_write + 1:] if off != 0
+    ]
+    assert not block_writes_after_header, \
+        f"删除后还有数据块写入：{block_writes_after_header}"
+
+
+def test_next_txn_id_persists_across_restart(isolated_data_dir):
+    """重启 TransactionManager 后 next_txn_id 不应回到 1。"""
+    from src import transaction_db
+
+    tm1 = transaction_db.TransactionManager()
+    txn_a = tm1.begin_transaction()
+    tm1.log_after_image(txn_a, 't', b'x', 0, 0)
+    tm1.commit_transaction(txn_a)
+
+    txn_b = tm1.begin_transaction()
+    tm1.log_after_image(txn_b, 't', b'y', 0, 0)
+    tm1.commit_transaction(txn_b)
+    last_id = txn_b
+    del tm1
+
+    tm2 = transaction_db.TransactionManager()
+    new_txn = tm2.begin_transaction()
+    assert new_txn > last_id, \
+        f"重启后 next_txn_id 必须大于历史最大值，但拿到 {new_txn} <= {last_id}"
+
+
+def test_recovery_finds_uncommitted_txn_with_only_before_image(isolated_data_dir):
+    """只写了 before-image 就崩溃的事务必须被恢复识别为 active。"""
+    from src import transaction_db
+
+    tm = transaction_db.TransactionManager()
+    txn = tm.begin_transaction()
+    tm.log_before_image(txn, 't', b'old', 0, 0)
+    del tm
+
+    tm2 = transaction_db.TransactionManager()
+    assert tm2.next_txn_id > txn, \
+        f"恢复后 next_txn_id ({tm2.next_txn_id}) 必须大于 leaked txn ({txn})"
+
+
+def test_update_records_by_indices_writes_log_and_maintains_index(isolated_data_dir):
+    from src import storage_db, transaction_db, index_db, index_catalog
+
+    sto = storage_db.Storage.create_table(
+        'students',
+        [('name', 0, 10), ('age', 2, 4)],
+    )
+    sto.insert_record(['Alice', '20'])
+    sto.insert_record(['Bob', '21'])
+    sto.insert_record(['Carol', '22'])
+    del sto
+
+    index_catalog.add_index('students', 'age')
+    idx = index_db.Index('students', 'age')
+    idx.create_index()
+    idx.close()
+
+    tm = transaction_db.get_transaction_manager()
+    txn = tm.begin_transaction()
+    sto2 = storage_db.Storage('students')
+    updated = sto2.update_records_by_indices([1], 1, 99, txn_id=txn)
+    assert updated == 1
+    tm.commit_transaction(txn)
+    del sto2
+
+    idx2 = index_db.Index('students', 'age')
+    assert idx2.search_index('99')
+    assert not idx2.search_index('21')
+    idx2.close()
+
+
+def test_delete_records_by_indices_writes_log_and_maintains_index(isolated_data_dir):
+    from src import storage_db, transaction_db, index_db, index_catalog
+
+    sto = storage_db.Storage.create_table('t', [('a', 2, 4)])
+    for i in range(5):
+        sto.insert_record([str(i)])
+    del sto
+
+    index_catalog.add_index('t', 'a')
+    idx = index_db.Index('t', 'a')
+    idx.create_index()
+    idx.close()
+
+    tm = transaction_db.get_transaction_manager()
+    txn = tm.begin_transaction()
+    sto2 = storage_db.Storage('t')
+    deleted = sto2.delete_records_by_indices([1, 3], txn_id=txn)
+    assert deleted == 2
+    tm.commit_transaction(txn)
+    del sto2
+
+    sto3 = storage_db.Storage('t')
+    assert len(sto3.record_list) == 3
+
+
+def test_execute_update_preserves_index_with_complex_where(isolated_data_dir):
+    from src import query_plan_db, index_catalog, index_db
+    query_plan_db.execute_sql("CREATE TABLE s (name str(10), age int);")
+    for n, a in [('A', 18), ('B', 25), ('C', 30)]:
+        query_plan_db.execute_sql(f"INSERT INTO s VALUES ('{n}', {a});")
+    query_plan_db.execute_sql("CREATE INDEX ON s(age);")
+
+    query_plan_db.execute_sql("UPDATE s SET age = 99 WHERE age > 20;")
+
+    idx = index_db.Index('s', 'age')
+    assert not idx.search_index('25')
+    assert not idx.search_index('30')
+    assert len(idx.search_index('99')) == 2
+    idx.close()
+
+
+def test_execute_update_writes_transaction_log(isolated_data_dir):
+    from src import query_plan_db
+    query_plan_db.execute_sql("CREATE TABLE s (name str(10), age int);")
+    query_plan_db.execute_sql("INSERT INTO s VALUES ('A', 20);")
+
+    query_plan_db.execute_sql("BEGIN;")
+    query_plan_db.execute_sql("UPDATE s SET age = 99 WHERE name = 'A';")
+    query_plan_db.execute_sql("ROLLBACK;")
+
+    from src import storage_db
+    sto = storage_db.Storage('s')
+    assert sto.record_list[0][1] == 20, \
+        f"ROLLBACK 后 age 应为 20，实际 {sto.record_list[0][1]}"
+
+
+def test_recovery_undo_uncommitted_insert(isolated_data_dir):
+    """BEGIN → UPDATE → 不 COMMIT → 重启，记录应被 undo。"""
+    from src import query_plan_db, transaction_db, storage_db
+    query_plan_db.execute_sql("CREATE TABLE t (a int);")
+    query_plan_db.execute_sql("INSERT INTO t VALUES (42);")
+    query_plan_db.execute_sql("BEGIN;")
+    query_plan_db.execute_sql("UPDATE t SET a = 99 WHERE a = 42;")
+    transaction_db.transaction_manager = None
+
+    transaction_db.get_transaction_manager()
+    sto = storage_db.Storage('t')
+    assert any(r[0] == 42 for r in sto.record_list), \
+        "未 COMMIT 的 UPDATE 应被 undo"
+
+
+def test_recovery_redo_committed_update(isolated_data_dir):
+    """BEGIN → UPDATE → COMMIT → 重启，after-image 应被 redo。"""
+    from src import query_plan_db, transaction_db, storage_db
+    query_plan_db.execute_sql("CREATE TABLE t (name str(10), v int);")
+    query_plan_db.execute_sql("INSERT INTO t VALUES ('x', 1);")
+    query_plan_db.execute_sql("BEGIN;")
+    query_plan_db.execute_sql("UPDATE t SET v = 99 WHERE name = 'x';")
+    query_plan_db.execute_sql("COMMIT;")
+
+    transaction_db.transaction_manager = None
+    transaction_db.get_transaction_manager()
+
+    sto = storage_db.Storage('t')
+    assert sto.record_list[0][1] == 99, \
+        f"已 COMMIT 的 UPDATE 应被 redo, 实际 v={sto.record_list[0][1]}"
+
+
+def test_recovery_after_explicit_rollback(isolated_data_dir):
+    """BEGIN → UPDATE → ROLLBACK → 重启，记录应回滚到原值。"""
+    from src import query_plan_db, transaction_db, storage_db
+    query_plan_db.execute_sql("CREATE TABLE t (a int);")
+    query_plan_db.execute_sql("INSERT INTO t VALUES (7);")
+    query_plan_db.execute_sql("BEGIN;")
+    query_plan_db.execute_sql("UPDATE t SET a = 99 WHERE a = 7;")
+    query_plan_db.execute_sql("ROLLBACK;")
+
+    transaction_db.transaction_manager = None
+    transaction_db.get_transaction_manager()
+
+    sto = storage_db.Storage('t')
+    assert any(r[0] == 7 for r in sto.record_list), \
+        "ROLLBACK 后记录应恢复原值"
+
+
+def test_btree_multi_level_with_sql_crud(isolated_data_dir, monkeypatch):
+    """MAX_NUM_OF_KEYS=5 + 跑 25 条 CRUD 验证多层 B+ 树。"""
+    from src import index_db, query_plan_db
+    monkeypatch.setattr(index_db, 'MAX_NUM_OF_KEYS', 5)
+
+    query_plan_db.execute_sql("CREATE TABLE t (k str(10), v int);")
+
+    for i in range(25):
+        query_plan_db.execute_sql(f"INSERT INTO t VALUES ('k{i:02d}', {i});")
+
+    query_plan_db.execute_sql("CREATE INDEX ON t(k);")
+
+    idx = index_db.Index('t', 'k')
+    idx._read_meta()
+    assert idx.number_of_levels >= 2, \
+        f"应至少 2 层，实际 {idx.number_of_levels}"
+    idx.close()
+
+    _, rows, _ = query_plan_db.execute_sql("SELECT * FROM t;")
+    assert len(rows) == 25
+
+    query_plan_db.execute_sql("UPDATE t SET v = 999 WHERE k = 'k12';")
+    _, rows2, _ = query_plan_db.execute_sql("SELECT * FROM t;")
+    matched = [r for r in rows2 if r[0] == 'k12']
+    assert len(matched) == 1
+    assert matched[0][1] == 999
+
+    query_plan_db.execute_sql("DELETE FROM t WHERE k = 'k12';")
+    _, rows3, _ = query_plan_db.execute_sql("SELECT * FROM t;")
+    assert len(rows3) == 24
+    assert all(r[0] != 'k12' for r in rows3)

@@ -20,16 +20,18 @@ HEADER_SIZE = struct.calcsize('!iii')
 
 class Index(object):
 
-    def __init__(self, tablename):
+    def __init__(self, tablename, index_field):
         tablename = tablename.strip()
+        index_field = index_field.strip()
         self.tablename = tablename
+        self.index_field = index_field
         self.open = False
         self.f_handle = None
         self.has_root = False
         self.number_of_levels = 0
         self.root_node_ptr = 0
 
-        ind_path = common_db.data_path(tablename + '.ind')
+        ind_path = common_db.data_path(f'{tablename}.{index_field}.ind')
 
         if not os.path.exists(ind_path):
             self.f_handle = open(ind_path, 'wb+')
@@ -385,7 +387,7 @@ class Index(object):
         self._write_leaf_node(current_ptr, len(new_keys), new_keys, new_ptrs, last_ptr)
         return True
 
-    def create_index(self, index_field):
+    def create_index(self):
         from . import storage_db, schema_db
 
         self._read_meta()
@@ -398,7 +400,7 @@ class Index(object):
         field_index = -1
         for i, (name, ftype, flen) in enumerate(field_list):
             n = name.strip() if isinstance(name, str) else name.strip().decode('utf-8')
-            if n == index_field.strip():
+            if n == self.index_field:
                 field_index = i
                 break
 
@@ -407,9 +409,9 @@ class Index(object):
             sto.open = False
             return False
 
-        for pos in sto.record_Position:
+        for i, pos in enumerate(sto.record_Position):
             blk_id, rec_id = pos
-            record = sto.record_list[sto.record_Position.index(pos)]
+            record = sto.record_list[i]
             field_value = record[field_index]
             if isinstance(field_value, int):
                 field_value = str(field_value)

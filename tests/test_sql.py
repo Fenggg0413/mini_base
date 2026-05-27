@@ -105,7 +105,7 @@ class TestParser:
         parser_db.set_handle()
 
     def test_parse_insert(self):
-        ast = common_db.global_parser.parse("INSERT INTO students (name, age) VALUES ('Alice', 20)")
+        ast = parser_db.set_handle().parse("INSERT INTO students (name, age) VALUES ('Alice', 20)")
         assert ast['type'] == 'insert'
         assert ast['table'] == 'students'
         # columns is a list of column dicts from ColumnList rule
@@ -114,25 +114,25 @@ class TestParser:
         assert len(ast['values']) == 2
 
     def test_parse_insert_no_columns(self):
-        ast = common_db.global_parser.parse("INSERT INTO students VALUES ('Alice', 20, 'A')")
+        ast = parser_db.set_handle().parse("INSERT INTO students VALUES ('Alice', 20, 'A')")
         assert ast['type'] == 'insert'
         assert ast['columns'] is None
         assert len(ast['values']) == 3
 
     def test_parse_update(self):
-        ast = common_db.global_parser.parse("UPDATE students SET grade = 'A' WHERE name = 'Bob'")
+        ast = parser_db.set_handle().parse("UPDATE students SET grade = 'A' WHERE name = 'Bob'")
         assert ast['type'] == 'update'
         assert ast['table'] == 'students'
         assert len(ast['assignments']) == 1
         assert ast['assignments'][0]['field'] == 'grade'
 
     def test_parse_delete(self):
-        ast = common_db.global_parser.parse("DELETE FROM students WHERE age < 18")
+        ast = parser_db.set_handle().parse("DELETE FROM students WHERE age < 18")
         assert ast['type'] == 'delete'
         assert ast['table'] == 'students'
 
     def test_parse_create_table(self):
-        ast = common_db.global_parser.parse("CREATE TABLE test (name str(10), age int, active bool)")
+        ast = parser_db.set_handle().parse("CREATE TABLE test (name str(10), age int, active bool)")
         assert ast['type'] == 'create_table'
         assert ast['table'] == 'test'
         assert len(ast['fields']) == 3
@@ -141,32 +141,32 @@ class TestParser:
         assert ast['fields'][2] == ('active', 3, 1)
 
     def test_parse_drop_table(self):
-        ast = common_db.global_parser.parse("DROP TABLE test")
+        ast = parser_db.set_handle().parse("DROP TABLE test")
         assert ast['type'] == 'drop_table'
         assert ast['table'] == 'test'
 
     def test_parse_or(self):
-        ast = common_db.global_parser.parse("SELECT * FROM t WHERE a = 1 OR b = 2")
+        ast = parser_db.set_handle().parse("SELECT * FROM t WHERE a = 1 OR b = 2")
         assert ast['where']['type'] == 'or'
 
     def test_parse_not(self):
-        ast = common_db.global_parser.parse("SELECT * FROM t WHERE NOT a = 1")
+        ast = parser_db.set_handle().parse("SELECT * FROM t WHERE NOT a = 1")
         assert ast['where']['type'] == 'not'
 
     def test_parse_order_by(self):
-        ast = common_db.global_parser.parse("SELECT * FROM t ORDER BY age DESC")
+        ast = parser_db.set_handle().parse("SELECT * FROM t ORDER BY age DESC")
         assert len(ast['order_by']) == 1
         assert ast['order_by'][0]['direction'] == 'desc'
         assert ast['order_by'][0]['field'] == 'age'
 
     def test_parse_multiline_where(self):
-        ast = common_db.global_parser.parse("SELECT * FROM t WHERE a >= 1 AND b != 'x' OR c = 3")
+        ast = parser_db.set_handle().parse("SELECT * FROM t WHERE a >= 1 AND b != 'x' OR c = 3")
         where = ast['where']
         assert where['type'] in ('and', 'or')
 
     def test_parse_comparison_operators(self):
         for op_str, op_name in [('=', '='), ('!=', '!='), ('<', '<'), ('>', '>'), ('<=', '<='), ('>=', '>=')]:
-            ast = common_db.global_parser.parse(f"SELECT * FROM t WHERE a {op_str} 1")
+            ast = parser_db.set_handle().parse(f"SELECT * FROM t WHERE a {op_str} 1")
             assert ast['where']['op'] == op_name, f"Failed for operator {op_str}"
 
 
@@ -420,3 +420,74 @@ class TestInsertEdgeCases:
         assert len(rows) > 0
         for r in rows:
             assert len(r) == 2
+
+
+def test_schema_deleteall_then_append_does_not_typeerror(isolated_data_dir):
+    """deleteAll 后再 appendTable 不应抛 TypeError。"""
+    from src import schema_db
+    schema = schema_db.Schema()
+    schema.appendTable('t1', [('a', 2, 10)])
+    schema.deleteAll()
+    schema.appendTable('t2', [('b', 2, 10)])  # 旧实现会抛 TypeError
+    assert schema.find_table('t2')
+
+
+def test_schema_body_begin_index_is_instance_attribute(isolated_data_dir):
+    """两个 Schema 实例不应共享 body_begin_index。"""
+    from src import schema_db
+    s1 = schema_db.Schema()
+    s1.appendTable('t1', [('a', 2, 10)])
+    s1_offset = s1.body_begin_index
+
+    s2 = schema_db.Schema()
+    s2_offset = s2.body_begin_index
+
+    s1.appendTable('t2', [('b', 2, 10)])
+    assert s2.body_begin_index == s2_offset, \
+        "Schema 实例之间不能共享 body_begin_index"
+
+
+def test_parser_instance_is_singleton(isolated_data_dir):
+    """parser_db.set_handle() 多次调用应返回同一实例。"""
+    from src import parser_db
+    parser_db.set_handle()
+    p1 = parser_db._parser_instance
+    parser_db.set_handle()
+    p2 = parser_db._parser_instance
+    assert p1 is p2
+    assert p1 is not None
+
+
+def test_no_global_parser_attribute_in_common_db():
+    from src import common_db
+    assert not hasattr(common_db, 'global_parser')
+
+
+def test_get_schema_returns_shared_when_set(isolated_data_dir):
+    from src import query_plan_db, schema_db, common_db
+    shared = schema_db.Schema()
+    common_db.shared_schema = shared
+    assert query_plan_db._get_schema() is shared
+
+
+def test_get_schema_falls_back_to_new_instance(isolated_data_dir):
+    from src import query_plan_db, common_db, schema_db
+    common_db.shared_schema = None
+    s = query_plan_db._get_schema()
+    assert isinstance(s, schema_db.Schema)
+
+
+def test_table_name_resolution_consistent_between_schema_and_query(isolated_data_dir):
+    from src import query_plan_db, schema_db, common_db
+    query_plan_db.execute_sql("CREATE TABLE Students (name str(10));")
+    schema = schema_db.Schema()
+    common_db.shared_schema = schema
+
+    found_by_schema = schema.find_table('students')
+    try:
+        resolved = query_plan_db._resolve_table_name('students')
+        ok_resolve = True
+    except query_plan_db.SqlExecutionError:
+        resolved = None
+        ok_resolve = False
+    assert found_by_schema == ok_resolve

@@ -65,6 +65,11 @@ from . import common_db
 from . import index_catalog
 
 
+def _max_records_per_block(record_len):
+    from .common_db import BLOCK_SIZE
+    return (BLOCK_SIZE - struct.calcsize('!i') - struct.calcsize('!ii')) // (record_len + struct.calcsize('!i'))
+
+
 # --------------------------------------------
 # the class can store table data into files
 # functions include insert, delete and update
@@ -299,8 +304,7 @@ class Storage(object):
         record_content_len = len(inputstr)
         record_head_len = struct.calcsize('!ii10s')
         record_len = record_head_len + record_content_len
-        MAX_RECORD_NUM = int((BLOCK_SIZE - struct.calcsize('!i') - struct.calcsize('!ii')) / (
-                record_len + struct.calcsize('!i')))
+        MAX_RECORD_NUM = _max_records_per_block(record_len)
 
         # Step4: To calculate new record Position
         if not len(self.record_Position):
@@ -419,6 +423,9 @@ class Storage(object):
         tableName = tableName.strip()
         if os.path.exists(common_db.data_path(tableName + '.dat')):
             os.remove(common_db.data_path(tableName + '.dat'))
+        import glob
+        for ind_path in glob.glob(common_db.data_path(f'{tableName}.*.ind')):
+            os.remove(ind_path)
 
         return True
 
@@ -567,7 +574,7 @@ class Storage(object):
         for indexed_field in indexed_fields:
             if indexed_field not in field_map:
                 continue
-            idx = _idx_mod.Index(self.tableName)
+            idx = _idx_mod.Index(self.tableName, indexed_field)
             fi, ftype = field_map[indexed_field]
             field_value = record[fi]
             if ftype == 2:
@@ -671,7 +678,7 @@ class Storage(object):
         record_len = record_head_len + record_content_len
         
         # Calculate the maximum number of records per block
-        MAX_RECORD_NUM = int((BLOCK_SIZE - struct.calcsize('!ii')) / (record_len + struct.calcsize('!i')))
+        MAX_RECORD_NUM = _max_records_per_block(record_len)
         
         # Recalculate record positions
         self.record_Position = []
@@ -682,13 +689,6 @@ class Storage(object):
         
         # Recalculate the number of data blocks
         self.data_block_num = (len(self.record_list) + MAX_RECORD_NUM - 1) // MAX_RECORD_NUM
-        
-        # Update the number of data blocks in the file header
-        self.f_handle.seek(0)
-        self.buf = ctypes.create_string_buffer(struct.calcsize('!iii'))
-        struct.pack_into('!iii', self.buf, 0, 0, self.data_block_num, self.num_of_fields)
-        self.f_handle.write(self.buf)
-        self.f_handle.flush()
         
         # Rewrite each data block
         for block_id in range(1, self.data_block_num + 1):
@@ -757,7 +757,17 @@ class Storage(object):
                 self.f_handle.seek(BLOCK_SIZE * block_id)
                 self.f_handle.write(empty_block)
                 self.f_handle.flush()
-        
+
+        self.f_handle.flush()
+        os.fsync(self.f_handle.fileno())
+
+        self.f_handle.seek(0)
+        header_buf = ctypes.create_string_buffer(struct.calcsize('!iii'))
+        struct.pack_into('!iii', header_buf, 0, 0, self.data_block_num, self.num_of_fields)
+        self.f_handle.write(header_buf)
+        self.f_handle.flush()
+        os.fsync(self.f_handle.fileno())
+
         return len(deleted_indices)
     
     # ------------------------------
@@ -935,3 +945,181 @@ class Storage(object):
             updated_count += 1
         
         return updated_count
+
+    def update_records_by_indices(self, indices, update_field_index, update_value, txn_id=None):
+        if not indices:
+            return 0
+        if update_field_index < 0 or update_field_index >= len(self.field_name_list):
+            return 0
+
+        field_type = self.field_name_list[update_field_index][1]
+        field_length = self.field_name_list[update_field_index][2]
+
+        try:
+            if field_type == 2:
+                converted = int(update_value)
+            elif field_type == 3:
+                converted = str(update_value).lower() in ('true', '1')
+            else:
+                converted = str(update_value).strip()
+                if len(converted) > field_length:
+                    return 0
+        except (TypeError, ValueError):
+            return 0
+
+        updated_field_name_raw = self.field_name_list[update_field_index][0]
+        if isinstance(updated_field_name_raw, bytes):
+            updated_field_name = updated_field_name_raw.strip().decode('utf-8')
+        else:
+            updated_field_name = updated_field_name_raw.strip()
+        indexed_fields = index_catalog.get_indexed_fields(self.tableName)
+        need_index_update = updated_field_name in indexed_fields
+
+        txn_manager = transaction_db.get_transaction_manager() if txn_id is not None else None
+
+        record_head_len = struct.calcsize('!ii10s')
+        record_content_len = sum(x[2] for x in self.field_name_list)
+        record_len = record_head_len + record_content_len
+
+        count = 0
+        for idx in indices:
+            if idx < 0 or idx >= len(self.record_list):
+                continue
+            pos = self.record_Position[idx]
+
+            self.f_handle.seek(BLOCK_SIZE * pos[0])
+            block_buf = bytearray(self.f_handle.read(BLOCK_SIZE))
+
+            offset_index = struct.calcsize('!ii') + pos[1] * struct.calcsize('!i')
+            record_offset = struct.unpack_from('!i', block_buf, offset_index)[0]
+
+            if txn_id is not None:
+                before_data = bytes(block_buf[record_offset:record_offset + record_len])
+                txn_manager.log_before_image(txn_id, self.tableName, before_data, pos[0], record_offset)
+
+            old_record = self.record_list[idx]
+            new_record_list = list(old_record)
+            new_record_list[update_field_index] = converted
+            new_record = tuple(new_record_list)
+            self.record_list[idx] = new_record
+
+            if need_index_update:
+                self._update_indexes('delete', old_record, pos)
+                self._update_indexes('insert', new_record, pos)
+
+            str_parts = []
+            for j, val in enumerate(new_record):
+                ft = self.field_name_list[j][1]
+                fl = self.field_name_list[j][2]
+                if ft == 2:
+                    s = str(val)
+                elif ft == 3:
+                    s = '1' if val else '0'
+                else:
+                    s = val.decode('utf-8').strip() if isinstance(val, bytes) else str(val).strip()
+                str_parts.append(' ' * (fl - len(s)) + s)
+            inputstr = ''.join(str_parts)
+
+            record_schema_address = struct.calcsize('!iii')
+            update_time = datetime.datetime.now().strftime('%Y-%m-%d')
+            struct.pack_into('!ii10s', block_buf, record_offset, record_schema_address, record_content_len, update_time.encode('utf-8'))
+            struct.pack_into('!' + str(record_content_len) + 's', block_buf, record_offset + record_head_len, inputstr.encode('utf-8'))
+
+            if txn_id is not None:
+                after_data = bytes(block_buf[record_offset:record_offset + record_len])
+                txn_manager.log_after_image(txn_id, self.tableName, after_data, pos[0], record_offset)
+
+            self.f_handle.seek(BLOCK_SIZE * pos[0])
+            self.f_handle.write(bytes(block_buf))
+            self.f_handle.flush()
+
+            if txn_id is not None:
+                os.fsync(self.f_handle.fileno())
+
+            count += 1
+        return count
+
+    def delete_records_by_indices(self, indices, txn_id=None):
+        if not indices:
+            return 0
+
+        txn_manager = transaction_db.get_transaction_manager() if txn_id is not None else None
+        record_head_len = struct.calcsize('!ii10s')
+        record_content_len = sum(x[2] for x in self.field_name_list)
+        record_len = record_head_len + record_content_len
+
+        to_delete = sorted(set(indices), reverse=True)
+        for idx in to_delete:
+            if idx < 0 or idx >= len(self.record_list):
+                continue
+            pos = self.record_Position[idx]
+            if txn_id is not None:
+                self.f_handle.seek(BLOCK_SIZE * pos[0])
+                block_buf = self.f_handle.read(BLOCK_SIZE)
+                offset_index = struct.calcsize('!ii') + pos[1] * struct.calcsize('!i')
+                record_offset = struct.unpack_from('!i', block_buf, offset_index)[0]
+                before_data = block_buf[record_offset:record_offset + record_len]
+                txn_manager.log_before_image(txn_id, self.tableName, bytes(before_data), pos[0], record_offset)
+
+            self._update_indexes('delete', self.record_list[idx], pos)
+
+        keep_records = [r for i, r in enumerate(self.record_list) if i not in set(indices)]
+
+        self.record_list = keep_records
+        self.record_Position = []
+        MAX = _max_records_per_block(record_len)
+        for i in range(len(self.record_list)):
+            self.record_Position.append((i // MAX + 1, i % MAX))
+        new_block_num = (len(self.record_list) + MAX - 1) // MAX if self.record_list else 0
+        old_block_num = self.data_block_num
+
+        for block_id in range(1, new_block_num + 1):
+            records_in_block = sum(1 for p in self.record_Position if p[0] == block_id)
+            block_buf = ctypes.create_string_buffer(BLOCK_SIZE)
+            struct.pack_into('!ii', block_buf, 0, block_id, records_in_block)
+            offset_index = struct.calcsize('!ii')
+            data_index = BLOCK_SIZE - records_in_block * record_len
+
+            for i, p in enumerate(self.record_Position):
+                if p[0] != block_id:
+                    continue
+                struct.pack_into('!i', block_buf, offset_index, data_index)
+                offset_index += struct.calcsize('!i')
+                str_parts = []
+                for j, val in enumerate(self.record_list[i]):
+                    ft = self.field_name_list[j][1]
+                    fl = self.field_name_list[j][2]
+                    if ft == 2:
+                        s = str(val)
+                    elif ft == 3:
+                        s = '1' if val else '0'
+                    else:
+                        s = val.decode('utf-8').strip() if isinstance(val, bytes) else str(val).strip()
+                    str_parts.append(' ' * (fl - len(s)) + s)
+                inputstr = ''.join(str_parts)
+                record_schema_address = struct.calcsize('!iii')
+                update_time = datetime.datetime.now().strftime('%Y-%m-%d')
+                struct.pack_into('!ii10s', block_buf, data_index, record_schema_address, record_content_len, update_time.encode('utf-8'))
+                struct.pack_into('!' + str(record_content_len) + 's', block_buf, data_index + record_head_len, inputstr.encode('utf-8'))
+                data_index += record_len
+
+            self.f_handle.seek(BLOCK_SIZE * block_id)
+            self.f_handle.write(block_buf)
+
+        empty = ctypes.create_string_buffer(BLOCK_SIZE)
+        for bid in range(new_block_num + 1, old_block_num + 1):
+            self.f_handle.seek(BLOCK_SIZE * bid)
+            self.f_handle.write(empty)
+
+        self.f_handle.flush()
+        os.fsync(self.f_handle.fileno())
+
+        self.data_block_num = new_block_num
+        self.f_handle.seek(0)
+        header_buf = ctypes.create_string_buffer(struct.calcsize('!iii'))
+        struct.pack_into('!iii', header_buf, 0, 0, self.data_block_num, self.num_of_fields)
+        self.f_handle.write(header_buf)
+        self.f_handle.flush()
+        os.fsync(self.f_handle.fileno())
+
+        return len(to_delete)
