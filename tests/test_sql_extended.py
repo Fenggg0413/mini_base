@@ -590,6 +590,162 @@ def test_execute_update_writes_transaction_log(isolated_data_dir):
         f"ROLLBACK 后 age 应为 20，实际 {sto.record_list[0][1]}"
 
 
+def test_appendTable_persists_metaHead_immediately(isolated_data_dir):
+    """appendTable 必须在返回前持久化 metaHead，否则崩在 __del__ 之前
+    会让新表对重启不可见，并让下一次 appendTable 用陈旧 offsetOfBody
+    覆盖孤儿 body（#8 回归）。"""
+    import struct
+    from src import schema_db, common_db
+
+    s = schema_db.Schema()
+    s.appendTable('mytable', [('id', 2, 4), ('name', 0, 10)])
+
+    # 直接读盘上的 metaHead，不经过 Schema 析构
+    with open(common_db.data_path('all.sch'), 'rb') as f:
+        meta = f.read(struct.calcsize('!?ii'))
+    is_stored, len_table_num, _ = struct.unpack('!?ii', meta)
+    assert is_stored is True, "appendTable 后 metaHead.isStored 必须为 True"
+    assert len_table_num >= 1, \
+        f"appendTable 后 lenOfTableNum 必须 >= 1，实际 {len_table_num}"
+
+    # 模拟"appendTable 之后立即崩溃"：把 headObj 置空，让 __del__ 跳过写盘
+    s.headObj = None
+    del s
+
+    # 重启 Schema，新表应可见
+    s2 = schema_db.Schema()
+    assert s2.find_table('mytable'), "崩溃后重启应能看到 mytable"
+
+
+def test_insert_record_logs_after_image_after_data_is_on_disk(isolated_data_dir):
+    """log_after_image 必须在数据已经落盘后才能调用，否则 redo 会把
+    after-image 写到未分配的 slot（#7 WAL 顺序回归）。"""
+    from src import storage_db, transaction_db, common_db
+
+    sto = storage_db.Storage.create_table('t', [('v', 2, 4)])
+    tm = transaction_db.get_transaction_manager()
+    txn = tm.begin_transaction()
+
+    real_log = tm.log_after_image
+    matches = []
+
+    def capturing_log(txn_id, table_name, record_data, block_id, record_offset):
+        # 读取另一个 fd 看 OS 缓存里磁盘上的内容
+        with open(common_db.data_path(f"{table_name}.dat"), 'rb') as f:
+            f.seek(common_db.BLOCK_SIZE * block_id + record_offset)
+            on_disk = f.read(len(record_data))
+        matches.append(on_disk == record_data)
+        return real_log(txn_id, table_name, record_data, block_id, record_offset)
+
+    tm.log_after_image = capturing_log
+    try:
+        sto.insert_record(['42'], txn_id=txn)
+    finally:
+        tm.log_after_image = real_log
+
+    assert matches and all(matches), \
+        f"log_after_image 调用时数据应已在磁盘上，结果: {matches}"
+
+
+def test_multi_assignment_update_maintains_all_indexes(isolated_data_dir):
+    """SET a=X, b=Y 两列都有索引时，两个索引都要正确指向新值，
+    旧值不能在 B+ 树里残留（#6 多列赋值索引悬挂回归）。"""
+    from src import query_plan_db, index_db
+    query_plan_db.execute_sql("CREATE TABLE t (a int, b int);")
+    query_plan_db.execute_sql("INSERT INTO t VALUES (1, 10);")
+    query_plan_db.execute_sql("INSERT INTO t VALUES (2, 20);")
+    query_plan_db.execute_sql("INSERT INTO t VALUES (3, 30);")
+    query_plan_db.execute_sql("CREATE INDEX ON t(a);")
+    query_plan_db.execute_sql("CREATE INDEX ON t(b);")
+
+    # 多行匹配 + 多列赋值
+    query_plan_db.execute_sql("UPDATE t SET a = 99, b = 999 WHERE a < 3;")
+
+    idx_a = index_db.Index('t', 'a')
+    idx_b = index_db.Index('t', 'b')
+    try:
+        assert not idx_a.search_index('1'), "idx_a 不应残留旧 key '1'"
+        assert not idx_a.search_index('2'), "idx_a 不应残留旧 key '2'"
+        assert len(idx_a.search_index('99')) == 2, "idx_a 必须包含两条新 key '99'"
+        assert idx_a.search_index('3'), "未匹配 WHERE 的行索引应保留"
+        assert not idx_b.search_index('10'), "idx_b 不应残留旧 key '10'"
+        assert not idx_b.search_index('20'), "idx_b 不应残留旧 key '20'"
+        assert len(idx_b.search_index('999')) == 2, "idx_b 必须包含两条新 key '999'"
+    finally:
+        idx_a.close()
+        idx_b.close()
+
+
+def test_simple_equality_delete_inside_txn_can_rollback(isolated_data_dir):
+    """单条等值 DELETE 在事务中必须可回滚（#3 快路径丢失 txn_id 回归）。"""
+    from src import query_plan_db, storage_db
+    query_plan_db.execute_sql("CREATE TABLE t (k str(10), v int);")
+    query_plan_db.execute_sql("INSERT INTO t VALUES ('A', 1);")
+    query_plan_db.execute_sql("INSERT INTO t VALUES ('B', 2);")
+
+    query_plan_db.execute_sql("BEGIN;")
+    query_plan_db.execute_sql("DELETE FROM t WHERE k = 'A';")
+    query_plan_db.execute_sql("ROLLBACK;")
+
+    sto = storage_db.Storage('t')
+    assert len(sto.record_list) == 2, \
+        f"ROLLBACK 后应有 2 行，实际 {len(sto.record_list)}"
+
+
+def test_unconditional_delete_inside_txn_can_rollback(isolated_data_dir):
+    """无 WHERE 的 DELETE 在事务中必须可回滚（#4 整表删除绕过日志回归）。"""
+    from src import query_plan_db, storage_db
+    query_plan_db.execute_sql("CREATE TABLE t (k str(10));")
+    query_plan_db.execute_sql("INSERT INTO t VALUES ('A');")
+    query_plan_db.execute_sql("INSERT INTO t VALUES ('B');")
+
+    query_plan_db.execute_sql("BEGIN;")
+    query_plan_db.execute_sql("DELETE FROM t;")
+    query_plan_db.execute_sql("ROLLBACK;")
+
+    sto = storage_db.Storage('t')
+    assert len(sto.record_list) == 2, \
+        f"ROLLBACK 后应有 2 行，实际 {len(sto.record_list)}"
+
+
+def test_batch_delete_undo_restores_all_records(isolated_data_dir):
+    """批量删除压缩后 ROLLBACK 必须完整恢复所有行——
+    错位 offset 的 before-image 会覆盖存活记录（#5 回归）。"""
+    from src import query_plan_db, storage_db
+    query_plan_db.execute_sql("CREATE TABLE t (k str(10), v int);")
+    for i in range(5):
+        query_plan_db.execute_sql(f"INSERT INTO t VALUES ('r{i}', {i});")
+
+    query_plan_db.execute_sql("BEGIN;")
+    # 删除中间几行，逼迫后续行被搬动
+    query_plan_db.execute_sql("DELETE FROM t WHERE v < 3;")
+    query_plan_db.execute_sql("ROLLBACK;")
+
+    sto = storage_db.Storage('t')
+    vals = sorted(r[1] for r in sto.record_list)
+    assert vals == [0, 1, 2, 3, 4], \
+        f"ROLLBACK 后应恢复全部 5 行，实际 {vals}"
+
+
+def test_rollback_restores_oldest_value_after_double_update(isolated_data_dir):
+    """同一事务连改两次同一行后 ROLLBACK，必须还原到事务开始前的值，
+    而不是停在第一次 update 后的中间值。"""
+    import time
+    from src import query_plan_db, storage_db
+    query_plan_db.execute_sql("CREATE TABLE s (name str(10), age int);")
+    query_plan_db.execute_sql("INSERT INTO s VALUES ('A', 1);")
+
+    query_plan_db.execute_sql("BEGIN;")
+    query_plan_db.execute_sql("UPDATE s SET age = 2 WHERE name = 'A';")
+    time.sleep(0.002)  # 保证 before-image 时间戳严格递增
+    query_plan_db.execute_sql("UPDATE s SET age = 3 WHERE name = 'A';")
+    query_plan_db.execute_sql("ROLLBACK;")
+
+    sto = storage_db.Storage('s')
+    assert sto.record_list[0][1] == 1, \
+        f"ROLLBACK 后 age 应为 1（最原始值），实际 {sto.record_list[0][1]}"
+
+
 def test_recovery_undo_uncommitted_insert(isolated_data_dir):
     """BEGIN → UPDATE → 不 COMMIT → 重启，记录应被 undo。"""
     from src import query_plan_db, transaction_db, storage_db

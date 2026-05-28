@@ -319,38 +319,11 @@ class Storage(object):
                 self.record_Position.append((last_Position[0], last_Position[1] + 1))
 
         last_Position = self.record_Position[-1]
-        
-        # 如果启用了事务，记录后像
-        if txn_id is not None:
-            # 获取事务管理器
-            txn_manager = transaction_db.get_transaction_manager()
-            
-            # 构造记录数据
-            record_data = ctypes.create_string_buffer(record_len)
-            record_schema_address = struct.calcsize('!iii')
-            update_time = datetime.datetime.now().strftime('%Y-%m-%d')
-            
-            struct.pack_into('!ii10s', record_data, 0, record_schema_address, record_content_len, update_time.encode('utf-8'))
-            struct.pack_into('!' + str(record_content_len) + 's', record_data, record_head_len, inputstr.encode('utf-8'))
 
-            # 根据先记后写规则：插入操作只需要记录后像
-            txn_manager.log_after_image(
-                txn_id,
-                self.tableName,
-                record_data.raw,
-                last_Position[0],
-                BLOCK_SIZE - (last_Position[1] + 1) * record_len
-            )
+        # WAL 顺序：先把数据写入并 fsync 到 .dat，再写 after-image 日志。
+        # 否则 redo 阶段会把字节回放到 dir/block header 尚未更新的 slot 上。
 
         # Step5: Write new record into file xxx.dat
-        # update data_block_num in directory block
-        self.f_handle.seek(0)
-        self.buf = ctypes.create_string_buffer(struct.calcsize('!iii'))
-        num_of_fields = getattr(self, 'num_of_fields', 0)
-        struct.pack_into('!iii', self.buf, 0, 0, self.data_block_num, num_of_fields)
-        self.f_handle.write(self.buf)
-        self.f_handle.flush()
-
         # update data block head
         self.f_handle.seek(BLOCK_SIZE * last_Position[0])
         self.buf = ctypes.create_string_buffer(struct.calcsize('!ii'))
@@ -377,10 +350,32 @@ class Storage(object):
         self.f_handle.write(self.buf.raw)
         self.f_handle.flush()
 
-        # 如果启用了事务，确保持久化
+        # update data_block_num in directory block —— 放在数据块之后，
+        # 让 dir header 充当本次插入的"提交点"：未更新 dir header 时崩溃，
+        # loader 不会读到这条新记录。
+        self.f_handle.seek(0)
+        self.buf = ctypes.create_string_buffer(struct.calcsize('!iii'))
+        num_of_fields = getattr(self, 'num_of_fields', 0)
+        struct.pack_into('!iii', self.buf, 0, 0, self.data_block_num, num_of_fields)
+        self.f_handle.write(self.buf)
+        self.f_handle.flush()
+
+        # 如果启用了事务，确保数据已经持久化，再写 after-image
         if txn_id is not None:
-            # 确保数据写入磁盘
             os.fsync(self.f_handle.fileno())
+
+            txn_manager = transaction_db.get_transaction_manager()
+            record_data = ctypes.create_string_buffer(record_len)
+            struct.pack_into('!ii10s', record_data, 0, record_schema_address, record_content_len, update_time.encode('utf-8'))
+            struct.pack_into('!' + str(record_content_len) + 's', record_data, record_head_len, inputstr.encode('utf-8'))
+
+            txn_manager.log_after_image(
+                txn_id,
+                self.tableName,
+                record_data.raw,
+                last_Position[0],
+                beginIndex,
+            )
 
         # 更新索引
         self._update_indexes('insert', tuple(tmpRecord), last_Position)
@@ -1048,19 +1043,24 @@ class Storage(object):
         record_content_len = sum(x[2] for x in self.field_name_list)
         record_len = record_head_len + record_content_len
 
+        # 压缩会搬动存活记录的位置，按"单条 before-image"日志后续无法
+        # 正确 undo（旧 offset 现在是另一条记录）。改成块级快照：
+        # 在任何修改前，把所有会被写入的块（含 header 块 0）整块写入日志，
+        # undo 时按 offset=0 整块还原，自然恢复到事务开始前的物理布局。
+        if txn_id is not None:
+            old_block_num = self.data_block_num
+            for bid in range(0, old_block_num + 1):
+                self.f_handle.seek(BLOCK_SIZE * bid)
+                snapshot = self.f_handle.read(BLOCK_SIZE)
+                if len(snapshot) < BLOCK_SIZE:
+                    snapshot = snapshot.ljust(BLOCK_SIZE, b'\x00')
+                txn_manager.log_before_image(txn_id, self.tableName, bytes(snapshot), bid, 0)
+
         to_delete = sorted(set(indices), reverse=True)
         for idx in to_delete:
             if idx < 0 or idx >= len(self.record_list):
                 continue
             pos = self.record_Position[idx]
-            if txn_id is not None:
-                self.f_handle.seek(BLOCK_SIZE * pos[0])
-                block_buf = self.f_handle.read(BLOCK_SIZE)
-                offset_index = struct.calcsize('!ii') + pos[1] * struct.calcsize('!i')
-                record_offset = struct.unpack_from('!i', block_buf, offset_index)[0]
-                before_data = block_buf[record_offset:record_offset + record_len]
-                txn_manager.log_before_image(txn_id, self.tableName, bytes(before_data), pos[0], record_offset)
-
             self._update_indexes('delete', self.record_list[idx], pos)
 
         keep_records = [r for i, r in enumerate(self.record_list) if i not in set(indices)]

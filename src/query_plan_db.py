@@ -639,50 +639,19 @@ def execute_delete(ast):
         context['tables'][table_norm]['types'][fn_clean] = ft
         context['field_candidates'].setdefault(fn_clean, []).append((table_norm, fn_clean))
 
-    # No conditions = delete all
-    if not conditions:
-        total_to_delete = len(storage.getRecord())
-        if total_to_delete > 0:
-            storage.delete_table_data(table_name)
-            new_storage = storage_db.Storage.create_table(table_name, field_list)
-            del new_storage
-        print("%d row(s) deleted." % total_to_delete)
-        del storage
-        return total_to_delete
-
-    # Simple equality condition — use delete_record directly
-    if isinstance(conditions, dict) and conditions.get('type') == 'condition' and conditions['op'] == '=':
-        left = conditions['left']
-        right = conditions['right']
-        field_idx = None
-        val_str = None
-
-        if left['type'] == 'column' and right['type'] == 'literal':
-            fn = left['name'].strip().lower()
-            if fn in field_map:
-                field_idx = field_map[fn][0]
-                val_str = str(right['value'])
-        elif right['type'] == 'column' and left['type'] == 'literal':
-            fn = right['name'].strip().lower()
-            if fn in field_map:
-                field_idx = field_map[fn][0]
-                val_str = str(left['value'])
-
-        if field_idx is not None:
-            deleted_count = storage.delete_record(field_idx, val_str)
-            print("%d row(s) deleted." % deleted_count)
-            del storage
-            return deleted_count
-
     records = storage.getRecord()
-    matching_indices = []
-    for i, record in enumerate(records):
-        row = {}
-        for j, (fn, ft, _fl) in enumerate(field_list):
-            fn_clean = fn.strip().lower() if isinstance(fn, str) else fn.strip().decode('utf-8').lower()
-            row[(table_norm, fn_clean)] = record[j]
-        if _eval_condition(conditions, row, context):
-            matching_indices.append(i)
+    if not conditions:
+        # 无 WHERE：匹配全表
+        matching_indices = list(range(len(records)))
+    else:
+        matching_indices = []
+        for i, record in enumerate(records):
+            row = {}
+            for j, (fn, ft, _fl) in enumerate(field_list):
+                fn_clean = fn.strip().lower() if isinstance(fn, str) else fn.strip().decode('utf-8').lower()
+                row[(table_norm, fn_clean)] = record[j]
+            if _eval_condition(conditions, row, context):
+                matching_indices.append(i)
 
     txn_id = common_db.current_transaction_id
     deleted_count = storage.delete_records_by_indices(matching_indices, txn_id=txn_id)

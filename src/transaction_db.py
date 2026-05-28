@@ -393,13 +393,15 @@ class TransactionManager:
                 if entry_data['txn_id'] in active_txns:
                     undo_entries.append(entry_data)
         
-        undo_entries.sort(key=lambda x: x['timestamp'], reverse=True)
-        
+        # 按时间升序，dedup 时保留每个位置最早的 before-image，
+        # 即事务开始前的原始状态。反向（DESC + 保留首次）会停在中间版本。
+        undo_entries.sort(key=lambda x: x['timestamp'])
+
         processed_locations = set()
-        
+
         for entry in undo_entries:
             location_key = f"{entry['table_name']}:{entry['location']}"
-            
+
             if location_key not in processed_locations:
                 try:
                     block_id, record_offset = map(int, entry['location'].split(':'))

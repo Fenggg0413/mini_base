@@ -381,6 +381,20 @@ class Schema(object):
                 str_field_list.append((fname, ftype, flen))
             self.headObj.tableFields[tableName]=str_field_list
 
+            # 立即把 metaHead 落盘——否则崩在 Schema.__del__ 之前的窗口里，
+            # 重启后看不到新表，下一次 appendTable 还会用陈旧 offsetOfBody
+            # 覆盖刚写下的 body。把 metaHead 放在 body / name 之后写，
+            # 充当本次 appendTable 的"提交点"。
+            metaBuf = ctypes.create_string_buffer(META_HEAD_SIZE)
+            struct.pack_into('!?ii', metaBuf, 0,
+                             self.headObj.isStored,
+                             self.headObj.lenOfTableNum,
+                             self.headObj.offsetOfBody)
+            self.fileObj.seek(0)
+            self.fileObj.write(metaBuf)
+            self.fileObj.flush()
+            os.fsync(self.fileObj.fileno())
+
     # -------------------------------
     # to determine whether the table named table_name exist, depending on the main memory structures
     # input
