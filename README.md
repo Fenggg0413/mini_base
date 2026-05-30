@@ -104,3 +104,7 @@ python -m pytest tests/test_index_integration.py -v  # 索引集成测试
 python -m pytest tests/test_sql.py -v                # SQL 解析与执行测试
 python -m pytest tests/test_sql_extended.py -v       # 扩展 SQL 测试
 ```
+## TODO
+- [ ] 实现buffer pool
+- [ ] 实现join+group by
+- [ ] 实现完整的wal
